@@ -95,6 +95,8 @@ func mergeFightWindows(a, b FightWindow) FightWindow {
 	out := FightWindow{
 		StartT:         math.Min(a.StartT, b.StartT),
 		EndT:           math.Max(a.EndT, b.EndT),
+		ObservedStartT: math.Min(a.ObservedStartT, b.ObservedStartT),
+		ObservedEndT:   math.Max(a.ObservedEndT, b.ObservedEndT),
 		Participants:   unionParticipants(a.Participants, b.Participants),
 		Deaths:         a.Deaths + b.Deaths,
 		HeroDamage:     a.HeroDamage + b.HeroDamage,
