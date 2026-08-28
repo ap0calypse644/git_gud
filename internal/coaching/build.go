@@ -3,6 +3,7 @@ package coaching
 import (
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/ap0calypse644/git_gud/internal/detector"
 	"github.com/ap0calypse644/git_gud/internal/timeline"
@@ -102,12 +103,25 @@ func targetHero(tl *timeline.MatchTimeline) string {
 		return ""
 	}
 	if player := tl.Players[strconv.Itoa(tl.TargetPlayerSlot)]; player != nil {
-		return player.HeroName
+		return compactHeroName(player)
 	}
 	for _, player := range tl.Players {
 		if player != nil && player.PlayerSlot == tl.TargetPlayerSlot {
-			return player.HeroName
+			return compactHeroName(player)
 		}
+	}
+	return ""
+}
+
+func compactHeroName(player *timeline.PlayerTimeline) string {
+	if player == nil {
+		return ""
+	}
+	if player.HeroName != "" {
+		return strings.TrimPrefix(player.HeroName, "npc_dota_hero_")
+	}
+	if player.HeroClass != "" {
+		return strings.ToLower(strings.TrimPrefix(player.HeroClass, "CDOTA_Unit_Hero_"))
 	}
 	return ""
 }
