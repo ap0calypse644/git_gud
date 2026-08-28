@@ -1,6 +1,9 @@
 package timeline
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestVisibleToTeam(t *testing.T) {
 	// Bit 2 = Radiant, bit 3 = Dire.
@@ -29,5 +32,16 @@ func TestMakeVisibilityEvent(t *testing.T) {
 	}
 	if ev.X != 100 || ev.Y != 120 {
 		t.Fatalf("unexpected event position: %#v", ev)
+	}
+}
+
+func TestVisibilityTimelineSerializesEmptyEventsAsArray(t *testing.T) {
+	v := VisibilityTimeline{Events: []VisibilityEvent{}}
+	data, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal visibility timeline: %v", err)
+	}
+	if string(data) != `{"direct_team_mask_available":false,"events":[]}` {
+		t.Fatalf("visibility JSON = %s", data)
 	}
 }
