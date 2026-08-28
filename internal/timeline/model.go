@@ -3,19 +3,19 @@ package timeline
 // MatchTimeline is the deterministic replay-derived input used by later
 // decision detectors. It intentionally contains no coaching judgments.
 type MatchTimeline struct {
-	MatchID          int64                      `json:"match_id"`
-	AccountID        uint32                     `json:"account_id"`
-	TargetPlayerSlot int                        `json:"target_player_slot"`
-	GameBuild        uint32                     `json:"game_build"`
-	DurationSeconds  float64                    `json:"duration_seconds"`
+	MatchID          int64                       `json:"match_id"`
+	AccountID        uint32                      `json:"account_id"`
+	TargetPlayerSlot int                         `json:"target_player_slot"`
+	GameBuild        uint32                      `json:"game_build"`
+	DurationSeconds  float64                     `json:"duration_seconds"`
 	Players          map[string]*PlayerTimeline `json:"players"`
-	Deaths           []DeathEvent               `json:"deaths,omitempty"`
-	Damage           []DamageEvent              `json:"damage,omitempty"`
-	Abilities        []AbilityEvent             `json:"abilities,omitempty"`
-	Items            []ItemEvent                `json:"items,omitempty"`
-	Buybacks         []BuybackEvent             `json:"buybacks,omitempty"`
-	Objectives       []ObjectiveEvent           `json:"objectives,omitempty"`
-	Fights           []FightWindow              `json:"fights,omitempty"`
+	Deaths           []DeathEvent                `json:"deaths,omitempty"`
+	Damage           []DamageEvent               `json:"damage,omitempty"`
+	Abilities        []AbilityEvent              `json:"abilities,omitempty"`
+	Items            []ItemEvent                 `json:"items,omitempty"`
+	Buybacks         []BuybackEvent              `json:"buybacks,omitempty"`
+	Objectives       []ObjectiveEvent            `json:"objectives,omitempty"`
+	Fights           []FightWindow               `json:"fights,omitempty"`
 }
 
 type PlayerTimeline struct {
@@ -96,11 +96,14 @@ type ObjectiveEvent struct {
 	TargetTeam   int     `json:"target_team,omitempty"`
 }
 
-// FightWindow is derived deterministically from hero-to-hero damage and death
-// events. It is context, not a coaching judgment.
+// FightWindow is derived deterministically from hero-to-hero damage, deaths,
+// and replay positions. It is context, not a coaching judgment. CenterX/Y are
+// the approximate center of the observed combat in Source 2 cell coordinates.
 type FightWindow struct {
 	StartT         float64 `json:"start_t"`
 	EndT           float64 `json:"end_t"`
+	CenterX        float64 `json:"center_x,omitempty"`
+	CenterY        float64 `json:"center_y,omitempty"`
 	Participants   []int   `json:"participants"`
 	Deaths         int     `json:"deaths"`
 	HeroDamage     int64   `json:"hero_damage"`
