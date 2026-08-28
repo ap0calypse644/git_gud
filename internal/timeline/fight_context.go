@@ -89,20 +89,20 @@ func DeriveTargetFightContexts(tl *MatchTimeline) []TargetFightContext {
 	out := make([]TargetFightContext, 0, len(tl.Fights))
 	for fightIndex, fight := range tl.Fights {
 		ctx := TargetFightContext{
-			StartT:                            fight.StartT,
-			EndT:                              fight.EndT,
-			ObservedStartT:                    fight.ObservedStartT,
-			ObservedEndT:                      fight.ObservedEndT,
-			ObservedTimingAvailable:           observedFightTimingAvailable(fight),
-			CenterX:                           fight.CenterX,
-			CenterY:                           fight.CenterY,
-			Participants:                      append([]int(nil), fight.Participants...),
-			Deaths:                            fight.Deaths,
-			HeroDamage:                        fight.HeroDamage,
-			TargetInvolved:                    fightContainsSlot(fight, tl.TargetPlayerSlot),
-			TeammatesAtStart:                  []FightTeammateState{},
-			NearbyAlliesAtStart:               []NearbyAlly{},
-			EnemyKnowledgeAtStart:             []EnemyKnowledgeState{},
+			StartT:                              fight.StartT,
+			EndT:                                fight.EndT,
+			ObservedStartT:                      fight.ObservedStartT,
+			ObservedEndT:                        fight.ObservedEndT,
+			ObservedTimingAvailable:             observedFightTimingAvailable(fight),
+			CenterX:                             fight.CenterX,
+			CenterY:                             fight.CenterY,
+			Participants:                        append([]int(nil), fight.Participants...),
+			Deaths:                              fight.Deaths,
+			HeroDamage:                          fight.HeroDamage,
+			TargetInvolved:                      fightContainsSlot(fight, tl.TargetPlayerSlot),
+			TeammatesAtStart:                    []FightTeammateState{},
+			NearbyAlliesAtStart:                 []NearbyAlly{},
+			EnemyKnowledgeAtStart:               []EnemyKnowledgeState{},
 			AlliedDeathsBeforeTargetInvolvement: []int{},
 		}
 
@@ -117,7 +117,11 @@ func DeriveTargetFightContexts(tl *MatchTimeline) []TargetFightContext {
 		}
 		ctx.EnemyKnowledgeAtStart = enemyKnowledgeAt(tl, target.Team, startT)
 
-		if ctx.ObservedTimingAvailable {
+		// Final fight participants come from the same combat moments that define
+		// the fight. If the target is not in that participant set, unrelated
+		// target actions that merely overlap in time must not become fight
+		// contribution or entry evidence.
+		if ctx.ObservedTimingAvailable && ctx.TargetInvolved {
 			populateTargetFightParticipation(tl, target.Team, fightIndex, &ctx)
 		}
 		out = append(out, ctx)
@@ -197,6 +201,10 @@ func populateTargetFightParticipation(tl *MatchTimeline, targetTeam, fightIndex 
 	endT := ctx.ObservedEndT
 	targetSlot := tl.TargetPlayerSlot
 
+	// First involvement is intentionally stricter than first ability use. A
+	// spell can be cast for farming, movement, scouting, or setup while a fight
+	// happens elsewhere. Entry timing therefore requires direct combat evidence:
+	// target damage dealt/received, a kill, an assist, or the target's death.
 	var firstT *float64
 	firstSource := ""
 	firstPriority := 100
@@ -263,6 +271,8 @@ func populateTargetFightParticipation(tl *MatchTimeline, targetTeam, fightIndex 
 		}
 	}
 
+	// Ability timing remains useful supporting context, but does not by itself
+	// prove physical/combat involvement in the engagement.
 	for _, event := range tl.Abilities {
 		if event.T < startT || event.T > endT || event.PlayerSlot != targetSlot {
 			continue
@@ -274,7 +284,6 @@ func populateTargetFightParticipation(tl *MatchTimeline, targetTeam, fightIndex 
 		if ctx.TargetFirstAbilityT == nil {
 			ctx.TargetFirstAbilityT = float64Ptr(event.T)
 		}
-		considerFirst(event.T, "ability", 3)
 	}
 
 	if firstT == nil {
@@ -301,15 +310,27 @@ func populateTargetFightParticipation(tl *MatchTimeline, targetTeam, fightIndex 
 	sort.Ints(ctx.AlliedDeathsBeforeTargetInvolvement)
 }
 
-// eventBelongsToFight assigns an event to at most one observed fight. When
-// final fights overlap in time, the freshest causal sample for the involved
-// hero selects the nearest fight center. This prevents contribution evidence
-// from being duplicated across simultaneous fights elsewhere on the map.
+// eventBelongsToFight assigns an event to at most one observed fight. Candidate
+// fights are first restricted to those whose participant set contains the hero
+// supplying the event position. This keeps a target combat event from being
+// reassigned to an overlapping fight the target never joined. If more than one
+// candidate remains, the freshest causal sample selects the nearest center.
 func eventBelongsToFight(tl *MatchTimeline, fightIndex int, t float64, positionSlot int) bool {
 	active := activeObservedFightsAt(tl, t)
 	if len(active) == 0 {
 		return false
 	}
+
+	participantActive := make([]int, 0, len(active))
+	for _, i := range active {
+		if fightContainsSlot(tl.Fights[i], positionSlot) {
+			participantActive = append(participantActive, i)
+		}
+	}
+	if len(participantActive) > 0 {
+		active = participantActive
+	}
+
 	if len(active) == 1 {
 		return active[0] == fightIndex
 	}
