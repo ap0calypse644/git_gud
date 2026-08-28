@@ -19,6 +19,7 @@ func main() {
 
 func run() error {
 	timelinePath := flag.String("timeline", "", "path to an existing timeline JSON")
+	analysis := flag.String("analysis", "deaths", "analysis to run: deaths | fights | all")
 	flag.Parse()
 	if *timelinePath == "" {
 		return fmt.Errorf("-timeline is required")
@@ -37,7 +38,26 @@ func run() error {
 
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	if err := enc.Encode(detector.AnalyzeDeaths(&tl)); err != nil {
+
+	var output any
+	switch *analysis {
+	case "deaths":
+		output = detector.AnalyzeDeaths(&tl)
+	case "fights":
+		output = detector.AnalyzeFights(&tl)
+	case "all":
+		output = struct {
+			Deaths detector.Analysis      `json:"deaths"`
+			Fights detector.FightAnalysis `json:"fights"`
+		}{
+			Deaths: detector.AnalyzeDeaths(&tl),
+			Fights: detector.AnalyzeFights(&tl),
+		}
+	default:
+		return fmt.Errorf("invalid -analysis %q: want deaths, fights, or all", *analysis)
+	}
+
+	if err := enc.Encode(output); err != nil {
 		return fmt.Errorf("encode detector analysis: %w", err)
 	}
 	return nil
