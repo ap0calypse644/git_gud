@@ -9,11 +9,11 @@ import (
 // consolidated fight. It is evidence only: it does not say the player should
 // have joined, should have avoided the fight, or played it well.
 type TargetFightContext struct {
-	StartT                 float64 `json:"start_t"`
-	EndT                   float64 `json:"end_t"`
-	ObservedStartT         float64 `json:"observed_start_t"`
-	ObservedEndT           float64 `json:"observed_end_t"`
-	ObservedTimingAvailable bool   `json:"observed_timing_available"`
+	StartT                  float64 `json:"start_t"`
+	EndT                    float64 `json:"end_t"`
+	ObservedStartT          float64 `json:"observed_start_t"`
+	ObservedEndT            float64 `json:"observed_end_t"`
+	ObservedTimingAvailable bool    `json:"observed_timing_available"`
 
 	CenterX        float64 `json:"center_x,omitempty"`
 	CenterY        float64 `json:"center_y,omitempty"`
@@ -22,10 +22,10 @@ type TargetFightContext struct {
 	HeroDamage     int64   `json:"hero_damage"`
 	TargetInvolved bool    `json:"target_involved"`
 
-	TargetAtStart       FightTargetState     `json:"target_at_start"`
-	TeammatesAtStart    []FightTeammateState `json:"teammates_at_start"`
-	NearbyAlliesAtStart []NearbyAlly          `json:"nearby_allies_at_start"`
-	EnemyKnowledgeAtStart []EnemyKnowledgeState `json:"enemy_knowledge_at_start"`
+	TargetAtStart         FightTargetState       `json:"target_at_start"`
+	TeammatesAtStart      []FightTeammateState   `json:"teammates_at_start"`
+	NearbyAlliesAtStart   []NearbyAlly            `json:"nearby_allies_at_start"`
+	EnemyKnowledgeAtStart []EnemyKnowledgeState   `json:"enemy_knowledge_at_start"`
 
 	TargetFirstInvolvementT      *float64 `json:"target_first_involvement_t,omitempty"`
 	TargetFirstInvolvementSource string   `json:"target_first_involvement_source,omitempty"`
@@ -87,22 +87,22 @@ func DeriveTargetFightContexts(tl *MatchTimeline) []TargetFightContext {
 	}
 
 	out := make([]TargetFightContext, 0, len(tl.Fights))
-	for _, fight := range tl.Fights {
+	for fightIndex, fight := range tl.Fights {
 		ctx := TargetFightContext{
-			StartT:                  fight.StartT,
-			EndT:                    fight.EndT,
-			ObservedStartT:          fight.ObservedStartT,
-			ObservedEndT:            fight.ObservedEndT,
-			ObservedTimingAvailable: observedFightTimingAvailable(fight),
-			CenterX:                 fight.CenterX,
-			CenterY:                 fight.CenterY,
-			Participants:            append([]int(nil), fight.Participants...),
-			Deaths:                  fight.Deaths,
-			HeroDamage:              fight.HeroDamage,
-			TargetInvolved:          fightContainsSlot(fight, tl.TargetPlayerSlot),
-			TeammatesAtStart:        []FightTeammateState{},
-			NearbyAlliesAtStart:     []NearbyAlly{},
-			EnemyKnowledgeAtStart:   []EnemyKnowledgeState{},
+			StartT:                            fight.StartT,
+			EndT:                              fight.EndT,
+			ObservedStartT:                    fight.ObservedStartT,
+			ObservedEndT:                      fight.ObservedEndT,
+			ObservedTimingAvailable:           observedFightTimingAvailable(fight),
+			CenterX:                           fight.CenterX,
+			CenterY:                           fight.CenterY,
+			Participants:                      append([]int(nil), fight.Participants...),
+			Deaths:                            fight.Deaths,
+			HeroDamage:                        fight.HeroDamage,
+			TargetInvolved:                    fightContainsSlot(fight, tl.TargetPlayerSlot),
+			TeammatesAtStart:                  []FightTeammateState{},
+			NearbyAlliesAtStart:               []NearbyAlly{},
+			EnemyKnowledgeAtStart:             []EnemyKnowledgeState{},
 			AlliedDeathsBeforeTargetInvolvement: []int{},
 		}
 
@@ -118,7 +118,7 @@ func DeriveTargetFightContexts(tl *MatchTimeline) []TargetFightContext {
 		ctx.EnemyKnowledgeAtStart = enemyKnowledgeAt(tl, target.Team, startT)
 
 		if ctx.ObservedTimingAvailable {
-			populateTargetFightParticipation(tl, target.Team, &ctx)
+			populateTargetFightParticipation(tl, target.Team, fightIndex, &ctx)
 		}
 		out = append(out, ctx)
 	}
@@ -189,8 +189,8 @@ func fightTeammatesAtStart(tl *MatchTimeline, team, targetSlot int, t, centerX, 
 	return out
 }
 
-func populateTargetFightParticipation(tl *MatchTimeline, targetTeam int, ctx *TargetFightContext) {
-	if tl == nil || ctx == nil {
+func populateTargetFightParticipation(tl *MatchTimeline, targetTeam, fightIndex int, ctx *TargetFightContext) {
+	if tl == nil || ctx == nil || fightIndex < 0 || fightIndex >= len(tl.Fights) {
 		return
 	}
 	startT := ctx.ObservedStartT
@@ -216,6 +216,12 @@ func populateTargetFightParticipation(tl *MatchTimeline, targetTeam int, ctx *Ta
 		if event.T < startT || event.T > endT || event.Value <= 0 {
 			continue
 		}
+		if event.AttackerSlot != targetSlot && event.VictimSlot != targetSlot {
+			continue
+		}
+		if !eventBelongsToFight(tl, fightIndex, event.T, targetSlot) {
+			continue
+		}
 		value := int64(event.Value)
 		if event.AttackerSlot == targetSlot {
 			ctx.TargetDamageDealt += value
@@ -237,6 +243,12 @@ func populateTargetFightParticipation(tl *MatchTimeline, targetTeam int, ctx *Ta
 		if event.T < startT || event.T > endT {
 			continue
 		}
+		targetParticipated := (event.VictimSlot != nil && *event.VictimSlot == targetSlot) ||
+			(event.AttackerSlot != nil && *event.AttackerSlot == targetSlot) ||
+			intSliceContains(event.AssistSlots, targetSlot)
+		if !targetParticipated || !eventBelongsToFight(tl, fightIndex, event.T, targetSlot) {
+			continue
+		}
 		if event.VictimSlot != nil && *event.VictimSlot == targetSlot {
 			if ctx.TargetDeathT == nil {
 				ctx.TargetDeathT = float64Ptr(event.T)
@@ -253,6 +265,9 @@ func populateTargetFightParticipation(tl *MatchTimeline, targetTeam int, ctx *Ta
 
 	for _, event := range tl.Abilities {
 		if event.T < startT || event.T > endT || event.PlayerSlot != targetSlot {
+			continue
+		}
+		if !eventBelongsToFight(tl, fightIndex, event.T, targetSlot) {
 			continue
 		}
 		ctx.TargetAbilityCount++
@@ -278,9 +293,69 @@ func populateTargetFightParticipation(tl *MatchTimeline, targetTeam int, ctx *Ta
 		if victim == nil || victim.Team != targetTeam || victim.PlayerSlot == targetSlot {
 			continue
 		}
+		if !eventBelongsToFight(tl, fightIndex, event.T, victim.PlayerSlot) {
+			continue
+		}
 		ctx.AlliedDeathsBeforeTargetInvolvement = append(ctx.AlliedDeathsBeforeTargetInvolvement, victim.PlayerSlot)
 	}
 	sort.Ints(ctx.AlliedDeathsBeforeTargetInvolvement)
+}
+
+// eventBelongsToFight assigns an event to at most one observed fight. When
+// final fights overlap in time, the freshest causal sample for the involved
+// hero selects the nearest fight center. This prevents contribution evidence
+// from being duplicated across simultaneous fights elsewhere on the map.
+func eventBelongsToFight(tl *MatchTimeline, fightIndex int, t float64, positionSlot int) bool {
+	active := activeObservedFightsAt(tl, t)
+	if len(active) == 0 {
+		return false
+	}
+	if len(active) == 1 {
+		return active[0] == fightIndex
+	}
+
+	player := tl.Players[slotKey(positionSlot)]
+	if sample, ok := heroSampleAtOrBefore(player, t); ok {
+		bestIndex := -1
+		bestDistance := math.MaxFloat64
+		for _, i := range active {
+			fight := tl.Fights[i]
+			distance := math.Hypot(sample.X-fight.CenterX, sample.Y-fight.CenterY)
+			if distance < bestDistance {
+				bestIndex = i
+				bestDistance = distance
+			}
+		}
+		return bestIndex == fightIndex
+	}
+
+	participantMatch := -1
+	for _, i := range active {
+		if !fightContainsSlot(tl.Fights[i], positionSlot) {
+			continue
+		}
+		if participantMatch >= 0 {
+			return false
+		}
+		participantMatch = i
+	}
+	return participantMatch == fightIndex
+}
+
+func activeObservedFightsAt(tl *MatchTimeline, t float64) []int {
+	if tl == nil {
+		return nil
+	}
+	out := make([]int, 0, 2)
+	for i, fight := range tl.Fights {
+		if !observedFightTimingAvailable(fight) {
+			continue
+		}
+		if t >= fight.ObservedStartT && t <= fight.ObservedEndT {
+			out = append(out, i)
+		}
+	}
+	return out
 }
 
 func float64Ptr(v float64) *float64 {
