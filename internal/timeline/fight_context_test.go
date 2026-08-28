@@ -82,11 +82,14 @@ func TestDeriveTargetFightContextsCapturesParticipationEvidence(t *testing.T) {
 	if len(ctx.NearbyAlliesAtStart) != 1 || ctx.NearbyAlliesAtStart[0].PlayerSlot != allySlot {
 		t.Fatalf("nearby allies=%+v", ctx.NearbyAlliesAtStart)
 	}
-	if ctx.TargetFirstInvolvementT == nil || *ctx.TargetFirstInvolvementT != 11 || ctx.TargetFirstInvolvementSource != "ability" {
+	if ctx.TargetFirstAbilityT == nil || *ctx.TargetFirstAbilityT != 11 {
+		t.Fatalf("first ability=%v, want 11", ctx.TargetFirstAbilityT)
+	}
+	if ctx.TargetFirstInvolvementT == nil || *ctx.TargetFirstInvolvementT != 12 || ctx.TargetFirstInvolvementSource != "damage_dealt" {
 		t.Fatalf("first involvement=%v source=%q", ctx.TargetFirstInvolvementT, ctx.TargetFirstInvolvementSource)
 	}
-	if ctx.SecondsToFirstInvolvement == nil || *ctx.SecondsToFirstInvolvement != 1 {
-		t.Fatalf("delay=%v, want 1", ctx.SecondsToFirstInvolvement)
+	if ctx.SecondsToFirstInvolvement == nil || *ctx.SecondsToFirstInvolvement != 2 {
+		t.Fatalf("delay=%v, want 2", ctx.SecondsToFirstInvolvement)
 	}
 	if ctx.TargetDamageDealt != 300 || ctx.TargetDamageReceived != 200 || ctx.TargetAbilityCount != 1 {
 		t.Fatalf("contribution dealt=%d received=%d abilities=%d", ctx.TargetDamageDealt, ctx.TargetDamageReceived, ctx.TargetAbilityCount)
@@ -113,6 +116,9 @@ func TestDeriveTargetFightContextsIncludesFightTargetDidNotJoin(t *testing.T) {
 			CenterX: 150, CenterY: 150,
 			Participants: []int{0, 128}, Deaths: 1, HeroDamage: 2000,
 		}},
+		// A target spell cast during a remote fight is not proof that the target
+		// joined that fight and must not create contribution/involvement fields.
+		Abilities: []AbilityEvent{{T: 32, PlayerSlot: 1, Ability: "remote_farm_spell"}},
 	}
 
 	contexts := DeriveTargetFightContexts(tl)
@@ -123,7 +129,7 @@ func TestDeriveTargetFightContextsIncludesFightTargetDidNotJoin(t *testing.T) {
 	if ctx.TargetInvolved {
 		t.Fatal("target should not be marked involved")
 	}
-	if ctx.TargetFirstInvolvementT != nil || ctx.TargetDamageDealt != 0 || ctx.TargetDamageReceived != 0 {
+	if ctx.TargetFirstInvolvementT != nil || ctx.TargetFirstAbilityT != nil || ctx.TargetAbilityCount != 0 || ctx.TargetDamageDealt != 0 || ctx.TargetDamageReceived != 0 {
 		t.Fatalf("unexpected target contribution: %+v", ctx)
 	}
 	if !ctx.TargetAtStart.SampleAvailable || ctx.TargetAtStart.DistanceToFightCenter <= 90 {
@@ -131,7 +137,7 @@ func TestDeriveTargetFightContextsIncludesFightTargetDidNotJoin(t *testing.T) {
 	}
 }
 
-func TestOverlappingFightContributionAssignedOnceByTargetPosition(t *testing.T) {
+func TestOverlappingFightContributionAssignedOnceByTargetParticipantAndPosition(t *testing.T) {
 	tl := &MatchTimeline{
 		TargetPlayerSlot: 1,
 		Players: map[string]*PlayerTimeline{
@@ -144,10 +150,14 @@ func TestOverlappingFightContributionAssignedOnceByTargetPosition(t *testing.T) 
 				},
 			},
 			slotKey(128): {PlayerSlot: 128, Team: 3},
+			slotKey(129): {PlayerSlot: 129, Team: 3},
 		},
 		Fights: []FightWindow{
 			{StartT: 7, EndT: 25, ObservedStartT: 10, ObservedEndT: 20, CenterX: 100, CenterY: 100, Participants: []int{1, 128}, TargetInvolved: true},
-			{StartT: 7, EndT: 25, ObservedStartT: 10, ObservedEndT: 20, CenterX: 160, CenterY: 160, Participants: []int{1, 129}, TargetInvolved: true},
+			// This simultaneous fight is geographically closer in this synthetic
+			// case but does not contain the target. Participant membership must win
+			// before spatial tie-breaking.
+			{StartT: 7, EndT: 25, ObservedStartT: 10, ObservedEndT: 20, CenterX: 101, CenterY: 100, Participants: []int{0, 129}},
 		},
 		Damage: []DamageEvent{{T: 12, AttackerSlot: 1, VictimSlot: 128, Value: 500}},
 	}
@@ -157,10 +167,10 @@ func TestOverlappingFightContributionAssignedOnceByTargetPosition(t *testing.T) 
 		t.Fatalf("got %d contexts, want 2", len(contexts))
 	}
 	if contexts[0].TargetDamageDealt != 500 || contexts[0].TargetFirstInvolvementT == nil {
-		t.Fatalf("near fight did not receive contribution: %+v", contexts[0])
+		t.Fatalf("target fight did not receive contribution: %+v", contexts[0])
 	}
-	if contexts[1].TargetDamageDealt != 0 || contexts[1].TargetFirstInvolvementT != nil {
-		t.Fatalf("overlapping far fight duplicated contribution: %+v", contexts[1])
+	if contexts[1].TargetInvolved || contexts[1].TargetDamageDealt != 0 || contexts[1].TargetFirstInvolvementT != nil {
+		t.Fatalf("non-target overlapping fight received contribution: %+v", contexts[1])
 	}
 }
 
