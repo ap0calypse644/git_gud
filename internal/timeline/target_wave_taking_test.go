@@ -65,11 +65,59 @@ func TestDeriveTargetWaveTakingEmitsDepletingEnemyWavePeriod(t *testing.T) {
 	if p.StartT != 1 || p.EndT != 3 || p.ContactSamples != 3 {
 		t.Fatalf("unexpected period bounds: %+v", p)
 	}
+	if p.ExposureStartT != 1 || p.ExposureEndT != 3 || p.ExposureContactSamples != 3 {
+		t.Fatalf("unexpected raw exposure bounds: %+v", p)
+	}
+	if p.FirstDepletionT != 2 || p.LastDepletionT != 3 {
+		t.Fatalf("unexpected depletion bounds: %+v", p)
+	}
 	if p.ObservedCreepLoss != 2 || p.NetCreepCountChange != -2 {
 		t.Fatalf("unexpected depletion: %+v", p)
 	}
 	if math.Abs(p.MinDistanceWorld-128) > 0.001 || math.Abs(p.MeanDistanceWorld-128) > 0.001 {
 		t.Fatalf("unexpected distance summary: %+v", p)
+	}
+}
+
+func TestDeriveTargetWaveTakingTrimsLongTrailingStragglerExposure(t *testing.T) {
+	tl := targetWaveTakingTestTimeline([]int{4, 3, 3, 3, 3, 3})
+	got := DeriveTargetWaveTaking(&tl)
+	if len(got.Periods) != 1 {
+		t.Fatalf("periods = %d, want 1", len(got.Periods))
+	}
+	p := got.Periods[0]
+	if p.ExposureStartT != 1 || p.ExposureEndT != 6 || p.ExposureContactSamples != 6 {
+		t.Fatalf("unexpected exposure bounds: %+v", p)
+	}
+	if p.StartT != 1 || p.EndT != 3 || p.ContactSamples != 3 {
+		t.Fatalf("expected depletion-bounded period ending at t=3, got %+v", p)
+	}
+	if p.FirstDepletionT != 2 || p.LastDepletionT != 2 {
+		t.Fatalf("unexpected depletion timestamps: %+v", p)
+	}
+	if got.TrailingContactSamplesTrimmed != 3 {
+		t.Fatalf("trailing contacts trimmed = %d, want 3", got.TrailingContactSamplesTrimmed)
+	}
+}
+
+func TestDeriveTargetWaveTakingTrimsLeadingNonDepletionExposure(t *testing.T) {
+	tl := targetWaveTakingTestTimeline([]int{4, 4, 4, 3, 2, 2})
+	got := DeriveTargetWaveTaking(&tl)
+	if len(got.Periods) != 1 {
+		t.Fatalf("periods = %d, want 1", len(got.Periods))
+	}
+	p := got.Periods[0]
+	if p.ExposureStartT != 1 || p.ExposureEndT != 6 {
+		t.Fatalf("unexpected exposure bounds: %+v", p)
+	}
+	if p.StartT != 2 || p.EndT != 6 {
+		t.Fatalf("unexpected depletion-bounded period: %+v", p)
+	}
+	if p.FirstDepletionT != 4 || p.LastDepletionT != 5 {
+		t.Fatalf("unexpected depletion timestamps: %+v", p)
+	}
+	if got.LeadingContactSamplesTrimmed != 1 {
+		t.Fatalf("leading contacts trimmed = %d, want 1", got.LeadingContactSamplesTrimmed)
 	}
 }
 
