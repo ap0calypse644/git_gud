@@ -1,9 +1,6 @@
 package timeline
 
-import (
-	"math"
-	"sort"
-)
+import "sort"
 
 const (
 	worldUnitsPerTimelineCoord = 128.0
@@ -108,7 +105,7 @@ func observerWardsCoveringSample(sample HeroSample, viewerTeam int, wards []Ward
 		if sample.T < ward.StartT || sample.T > ward.EndT {
 			continue
 		}
-		rangeWorld := wardVisionRangeAt(ward, sample.T)
+		rangeWorld := conservativeWardVisionRange(ward)
 		if rangeWorld <= 0 {
 			continue
 		}
@@ -123,24 +120,22 @@ func observerWardsCoveringSample(sample HeroSample, viewerTeam int, wards []Ward
 	return refs
 }
 
-// wardVisionRangeAt uses the ordinary five-minute day/night cadence only when
-// the replay reports different day/night ranges. Temporary darkness and
-// hero-specific vision modifiers are intentionally outside this estimate.
-func wardVisionRangeAt(ward WardInterval, t float64) float64 {
-	if ward.DayVisionRange == ward.NightVisionRange {
-		return ward.DayVisionRange
+// If a replay ever reports different day/night ranges, use the smaller
+// positive radius instead of pretending we know temporary day/night state.
+// Current observer wards in the validated replay expose 1600/1600.
+func conservativeWardVisionRange(ward WardInterval) float64 {
+	day := ward.DayVisionRange
+	night := ward.NightVisionRange
+	switch {
+	case day > 0 && night > 0 && day < night:
+		return day
+	case day > 0 && night > 0:
+		return night
+	case day > 0:
+		return day
+	default:
+		return night
 	}
-	if ward.DayVisionRange <= 0 {
-		return ward.NightVisionRange
-	}
-	if ward.NightVisionRange <= 0 {
-		return ward.DayVisionRange
-	}
-	phase := int(math.Floor(math.Max(t, 0)/300.0)) % 2
-	if phase == 0 {
-		return ward.DayVisionRange
-	}
-	return ward.NightVisionRange
 }
 
 func uniqueWardRefs(in []VisionSourceRef) []VisionSourceRef {
