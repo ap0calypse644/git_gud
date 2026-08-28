@@ -18,6 +18,7 @@ type MatchTimeline struct {
 	Fights           []FightWindow               `json:"fights,omitempty"`
 	Visibility       VisibilityTimeline          `json:"visibility"`
 	VisionSources    VisionSourceTimeline        `json:"vision_sources"`
+	Knowledge        KnowledgeTimeline           `json:"knowledge"`
 }
 
 type PlayerTimeline struct {
@@ -94,6 +95,36 @@ type WardInterval struct {
 	DayVisionRange   float64 `json:"day_vision_range,omitempty"`
 	NightVisionRange float64 `json:"night_vision_range,omitempty"`
 	FOWTeam          int     `json:"fow_team,omitempty"`
+}
+
+// KnowledgeTimeline is deliberately weaker than direct visibility. The current
+// method only asks whether an omniscient replay sample fell inside a friendly
+// observer ward's nominal radius, so its intervals are explicitly estimated.
+type KnowledgeTimeline struct {
+	Team                int                           `json:"team"`
+	Method              string                        `json:"method"`
+	EstimatedVisibility []EstimatedVisibilityInterval `json:"estimated_visibility"`
+}
+
+// EstimatedVisibilityInterval is a contiguous run of enemy replay samples that
+// fall inside at least one friendly observer ward's nominal vision radius.
+// It is useful evidence for later coaching, but terrain, trees, invisibility,
+// temporary darkness and other FoW mechanics can invalidate the estimate.
+type EstimatedVisibilityInterval struct {
+	PlayerSlot  int               `json:"player_slot"`
+	StartT      float64           `json:"start_t"`
+	EndT        float64           `json:"end_t"`
+	StartX      float64           `json:"start_x"`
+	StartY      float64           `json:"start_y"`
+	EndX        float64           `json:"end_x"`
+	EndY        float64           `json:"end_y"`
+	SampleCount int               `json:"sample_count"`
+	SourceWards []VisionSourceRef `json:"source_wards"`
+}
+
+type VisionSourceRef struct {
+	EntityIndex  int32 `json:"entity_index"`
+	EntitySerial int32 `json:"entity_serial"`
 }
 
 type DeathEvent struct {
