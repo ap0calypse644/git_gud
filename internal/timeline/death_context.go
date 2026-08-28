@@ -35,20 +35,21 @@ type TargetDeathContext struct {
 // the target death. TimeFromFightStart is measured from the padded final fight
 // start because that is the stable window exposed by MatchTimeline.
 type DeathFightContext struct {
-	StartT               float64 `json:"start_t"`
-	EndT                 float64 `json:"end_t"`
-	CenterX               float64 `json:"center_x,omitempty"`
-	CenterY               float64 `json:"center_y,omitempty"`
-	Participants          []int   `json:"participants"`
-	Deaths                int     `json:"deaths"`
-	HeroDamage            int64   `json:"hero_damage"`
-	TargetInvolved        bool    `json:"target_involved"`
-	TimeFromFightStart    float64 `json:"time_from_fight_start"`
+	StartT            float64 `json:"start_t"`
+	EndT              float64 `json:"end_t"`
+	CenterX            float64 `json:"center_x,omitempty"`
+	CenterY            float64 `json:"center_y,omitempty"`
+	Participants       []int   `json:"participants"`
+	Deaths             int     `json:"deaths"`
+	HeroDamage         int64   `json:"hero_damage"`
+	TargetInvolved     bool    `json:"target_involved"`
+	TimeFromFightStart float64 `json:"time_from_fight_start"`
 }
 
 // NearbyAlly is one alive allied primary hero with a sufficiently fresh replay
-// sample at the target death time. Samples are sorted by distance so callers
-// can read immediate support context without inventing a classification.
+// sample from at or before the target death time. Samples are sorted by
+// distance so callers can read immediate support context without inventing a
+// classification.
 type NearbyAlly struct {
 	PlayerSlot int     `json:"player_slot"`
 	SampleT    float64 `json:"sample_t"`
@@ -59,8 +60,9 @@ type NearbyAlly struct {
 
 // DeriveTargetDeathContexts builds one context per target-player death from the
 // already-derived final fight, player-sample, damage, and conservative enemy
-// knowledge layers. It never reads an enemy's actual position at the death
-// time; enemy state comes only from EnemyKnowledgeAt.
+// knowledge layers. Point-in-time hero samples come only from at or before the
+// death. Enemy state comes only from EnemyKnowledgeAt and never from the
+// enemy's actual PlayerTimeline position at the death timestamp.
 func DeriveTargetDeathContexts(tl *MatchTimeline) []TargetDeathContext {
 	if tl == nil {
 		return []TargetDeathContext{}
@@ -89,7 +91,7 @@ func DeriveTargetDeathContexts(tl *MatchTimeline) []TargetDeathContext {
 		}
 		sort.Ints(ctx.AssistSlots)
 
-		if sample, ok := nearestHeroSampleAt(target, death.T); ok {
+		if sample, ok := heroSampleAtOrBefore(target, death.T); ok {
 			ctx.PositionAvailable = true
 			ctx.X = sample.X
 			ctx.Y = sample.Y
@@ -151,14 +153,6 @@ func fightContextForDeath(fights []FightWindow, targetSlot int, t, x, y float64,
 }
 
 func fightContainsSlot(fight FightWindow, slot int) bool {
-	if fight.TargetInvolved {
-		for _, participant := range fight.Participants {
-			if participant == slot {
-				return true
-			}
-		}
-		return false
-	}
 	for _, participant := range fight.Participants {
 		if participant == slot {
 			return true
@@ -173,7 +167,7 @@ func nearbyAlliesAt(tl *MatchTimeline, team, targetSlot int, t, targetX, targetY
 		if player == nil || player.PlayerSlot == targetSlot || player.Team != team {
 			continue
 		}
-		sample, ok := nearestHeroSampleAt(player, t)
+		sample, ok := heroSampleAtOrBefore(player, t)
 		if !ok || !sample.Alive {
 			continue
 		}
@@ -195,30 +189,21 @@ func nearbyAlliesAt(tl *MatchTimeline, team, targetSlot int, t, targetX, targetY
 	return out
 }
 
-func nearestHeroSampleAt(player *PlayerTimeline, t float64) (HeroSample, bool) {
+func heroSampleAtOrBefore(player *PlayerTimeline, t float64) (HeroSample, bool) {
 	if player == nil || len(player.Samples) == 0 {
 		return HeroSample{}, false
 	}
 
 	samples := player.Samples
-	i := sort.Search(len(samples), func(i int) bool { return samples[i].T >= t })
-	best := -1
-	bestDelta := math.MaxFloat64
-	if i < len(samples) {
-		best = i
-		bestDelta = math.Abs(samples[i].T - t)
-	}
-	if i > 0 {
-		delta := math.Abs(samples[i-1].T - t)
-		if delta <= bestDelta {
-			best = i - 1
-			bestDelta = delta
-		}
-	}
-	if best < 0 || bestDelta > deathContextSampleMaxAge {
+	i := sort.Search(len(samples), func(i int) bool { return samples[i].T > t })
+	if i == 0 {
 		return HeroSample{}, false
 	}
-	return samples[best], true
+	sample := samples[i-1]
+	if t-sample.T > deathContextSampleMaxAge {
+		return HeroSample{}, false
+	}
+	return sample, true
 }
 
 func damageContextAt(damage []DamageEvent, targetSlot int, t float64) (received5, received10, dealt5, dealt10 int64) {
