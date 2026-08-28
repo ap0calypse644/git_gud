@@ -14,8 +14,9 @@ const (
 // EnemyKnowledgeState is a point-in-time conservative information state for
 // one enemy. "estimated_visible" means nominal friendly vision geometry says
 // the enemy should have been visible; it is not direct replay FoW truth.
-// "last_seen" carries the end of the most recent estimated-visible interval,
-// while "never_seen" means this estimator has no prior sighting evidence.
+// "last_seen" carries the end of the most recent completed estimated-visible
+// interval, while "never_seen" means this estimator has no prior sighting
+// evidence.
 type EnemyKnowledgeState struct {
 	PlayerSlot       int               `json:"player_slot"`
 	AtT              float64           `json:"at_t"`
@@ -68,10 +69,15 @@ func DeriveKnowledge(tl *MatchTimeline) KnowledgeTimeline {
 }
 
 // EnemyKnowledgeAt reconstructs the estimator's information state at an
-// arbitrary match time. Crucially, once an enemy leaves estimated vision it
-// exposes only the last estimated-seen position and its age, never the enemy's
-// later omniscient replay position. The last-seen anchor inherits the same
-// conservative/estimated status as the visibility interval it came from.
+// arbitrary match time. Once an enemy leaves estimated vision, it exposes only
+// the last completed estimated-seen position and its age, never the enemy's
+// later omniscient replay position.
+//
+// When t falls inside an estimated-visible interval, the interval's EndT/EndX/
+// EndY and aggregated source lists may contain samples from after t. Those
+// future anchors are therefore deliberately not returned. The state records
+// LastSeenT=t and zero age, while position/source evidence remains omitted until
+// the interval is complete. This keeps point-in-time queries causal.
 func EnemyKnowledgeAt(k KnowledgeTimeline, playerSlot int, t float64) EnemyKnowledgeState {
 	state := EnemyKnowledgeState{
 		PlayerSlot: playerSlot,
@@ -93,25 +99,26 @@ func EnemyKnowledgeAt(k KnowledgeTimeline, playerSlot int, t float64) EnemyKnowl
 		return state
 	}
 
-	lastT := latest.EndT
-	lastX := latest.EndX
-	lastY := latest.EndY
-	state.LastSeenT = &lastT
-	state.LastSeenX = &lastX
-	state.LastSeenY = &lastY
-	state.SourceWards = append([]VisionSourceRef(nil), latest.SourceWards...)
-	state.SourceHeroSlots = append([]int(nil), latest.SourceHeroSlots...)
-
 	if latest.EndT >= t {
+		seenT := t
 		zero := 0.0
 		state.Status = "estimated_visible"
+		state.LastSeenT = &seenT
 		state.SecondsSinceSeen = &zero
 		return state
 	}
 
+	lastT := latest.EndT
+	lastX := latest.EndX
+	lastY := latest.EndY
 	age := t - latest.EndT
 	state.Status = "last_seen"
+	state.LastSeenT = &lastT
+	state.LastSeenX = &lastX
+	state.LastSeenY = &lastY
 	state.SecondsSinceSeen = &age
+	state.SourceWards = append([]VisionSourceRef(nil), latest.SourceWards...)
+	state.SourceHeroSlots = append([]int(nil), latest.SourceHeroSlots...)
 	return state
 }
 
