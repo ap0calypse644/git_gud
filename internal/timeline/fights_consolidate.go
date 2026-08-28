@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	fightMergeMinOverlapSeconds = 3.0
+	fightMergeMinOverlapSeconds = 2.5
 	fightMergeSpatialRadius     = 15.0
 	fightMergeParticipantRatio  = 0.60
 )
