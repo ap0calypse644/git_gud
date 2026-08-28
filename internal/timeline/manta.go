@@ -59,6 +59,7 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 	var deaths []rawDeath
 
 	events := newEventCollector(p)
+	visibility := newVisibilityCollector()
 
 	combatLogName := func(index uint32) string {
 		name, _ := p.LookupStringByIndex("CombatLogNames", int32(index))
@@ -164,6 +165,12 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 		if matchTime < 0 {
 			return nil
 		}
+
+		// Visibility changes are exact replay facts and must be observed before
+		// the roughly-1Hz hero snapshot throttle. Modern replay builds may omit
+		// this field; the collector records that capability explicitly.
+		visibility.observe(&out, e, slot, team, matchTime)
+
 		second := int(math.Floor(matchTime))
 		if lastSampleSecond[slot] == second {
 			return nil
