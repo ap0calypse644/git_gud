@@ -45,5 +45,6 @@ func (b *Builder) Build(_ context.Context, match opendota.Match, replayPath stri
 		parsed.Visibility.Events = []VisibilityEvent{}
 	}
 	parsed.Knowledge = DeriveKnowledge(&parsed)
+	parsed.TargetDeathContexts = DeriveTargetDeathContexts(&parsed)
 	return WriteJSON(b.storageRoot, parsed)
 }

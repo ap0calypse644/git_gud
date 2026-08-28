@@ -186,8 +186,11 @@ func TestEnemyKnowledgeAtVisibleLastSeenAndNeverSeen(t *testing.T) {
 	if visible.Status != "estimated_visible" || visible.SecondsSinceSeen == nil || *visible.SecondsSinceSeen != 0 {
 		t.Fatalf("unexpected visible state: %#v", visible)
 	}
-	if visible.LastSeenT == nil || *visible.LastSeenT != 20 {
-		t.Fatalf("visible last-seen anchor = %#v, want interval end 20", visible.LastSeenT)
+	if visible.LastSeenT == nil || *visible.LastSeenT != 15 {
+		t.Fatalf("visible last-seen time = %#v, want query time 15", visible.LastSeenT)
+	}
+	if visible.LastSeenX != nil || visible.LastSeenY != nil || len(visible.SourceWards) != 0 || len(visible.SourceHeroSlots) != 0 {
+		t.Fatalf("current interval leaked future position/source evidence: %#v", visible)
 	}
 
 	missing := EnemyKnowledgeAt(k, 128, 35)

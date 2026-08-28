@@ -3,22 +3,23 @@ package timeline
 // MatchTimeline is the deterministic replay-derived input used by later
 // decision detectors. It intentionally contains no coaching judgments.
 type MatchTimeline struct {
-	MatchID          int64                       `json:"match_id"`
-	AccountID        uint32                      `json:"account_id"`
-	TargetPlayerSlot int                         `json:"target_player_slot"`
-	GameBuild        uint32                      `json:"game_build"`
-	DurationSeconds  float64                     `json:"duration_seconds"`
-	Players          map[string]*PlayerTimeline `json:"players"`
-	Deaths           []DeathEvent                `json:"deaths,omitempty"`
-	Damage           []DamageEvent               `json:"damage,omitempty"`
-	Abilities        []AbilityEvent              `json:"abilities,omitempty"`
-	Items            []ItemEvent                 `json:"items,omitempty"`
-	Buybacks         []BuybackEvent              `json:"buybacks,omitempty"`
-	Objectives       []ObjectiveEvent            `json:"objectives,omitempty"`
-	Fights           []FightWindow               `json:"fights,omitempty"`
-	Visibility       VisibilityTimeline          `json:"visibility"`
-	VisionSources    VisionSourceTimeline        `json:"vision_sources"`
-	Knowledge        KnowledgeTimeline           `json:"knowledge"`
+	MatchID             int64                       `json:"match_id"`
+	AccountID           uint32                      `json:"account_id"`
+	TargetPlayerSlot    int                         `json:"target_player_slot"`
+	GameBuild           uint32                      `json:"game_build"`
+	DurationSeconds     float64                     `json:"duration_seconds"`
+	Players             map[string]*PlayerTimeline `json:"players"`
+	Deaths              []DeathEvent                `json:"deaths,omitempty"`
+	Damage              []DamageEvent               `json:"damage,omitempty"`
+	Abilities           []AbilityEvent              `json:"abilities,omitempty"`
+	Items               []ItemEvent                 `json:"items,omitempty"`
+	Buybacks            []BuybackEvent              `json:"buybacks,omitempty"`
+	Objectives          []ObjectiveEvent            `json:"objectives,omitempty"`
+	Fights              []FightWindow               `json:"fights,omitempty"`
+	Visibility          VisibilityTimeline          `json:"visibility"`
+	VisionSources       VisionSourceTimeline        `json:"vision_sources"`
+	Knowledge           KnowledgeTimeline           `json:"knowledge"`
+	TargetDeathContexts []TargetDeathContext        `json:"target_death_contexts"`
 }
 
 type PlayerTimeline struct {
