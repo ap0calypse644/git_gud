@@ -1,0 +1,66 @@
+package timeline
+
+import "testing"
+
+func TestHeroPlayerSlot(t *testing.T) {
+	tests := []struct {
+		playerID int
+		team     int
+		want     int
+		ok       bool
+	}{
+		{playerID: 0, team: 2, want: 0, ok: true},
+		{playerID: 2, team: 2, want: 1, ok: true},
+		{playerID: 4, team: 2, want: 2, ok: true},
+		{playerID: 8, team: 2, want: 4, ok: true},
+		{playerID: 10, team: 3, want: 128, ok: true},
+		{playerID: 12, team: 3, want: 129, ok: true},
+		{playerID: 18, team: 3, want: 132, ok: true},
+		{playerID: 1, team: 2, ok: false},
+		{playerID: 9, team: 2, ok: false},
+		{playerID: 8, team: 3, ok: false},
+	}
+	for _, tc := range tests {
+		got, ok := heroPlayerSlot(tc.playerID, tc.team)
+		if ok != tc.ok || (ok && got != tc.want) {
+			t.Fatalf("heroPlayerSlot(%d, %d) = (%d, %v), want (%d, %v)", tc.playerID, tc.team, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+func TestResourcePlayerSlot(t *testing.T) {
+	tests := []struct {
+		playerID int
+		team     int
+		want     int
+		ok       bool
+	}{
+		{playerID: 0, team: 2, want: 0, ok: true},
+		{playerID: 4, team: 2, want: 4, ok: true},
+		{playerID: 5, team: 3, want: 128, ok: true},
+		{playerID: 9, team: 3, want: 132, ok: true},
+		{playerID: 2, team: 3, want: 130, ok: true},
+		{playerID: 8, team: 2, ok: false},
+	}
+	for _, tc := range tests {
+		got, ok := resourcePlayerSlot(tc.playerID, tc.team)
+		if ok != tc.ok || (ok && got != tc.want) {
+			t.Fatalf("resourcePlayerSlot(%d, %d) = (%d, %v), want (%d, %v)", tc.playerID, tc.team, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+func TestNumberHelpers(t *testing.T) {
+	if got, ok := numberInt(uint32(42)); !ok || got != 42 {
+		t.Fatalf("numberInt = (%d, %v)", got, ok)
+	}
+	if got, ok := numberUint(int64(99)); !ok || got != 99 {
+		t.Fatalf("numberUint = (%d, %v)", got, ok)
+	}
+	if _, ok := numberUint(int32(-1)); ok {
+		t.Fatal("numberUint accepted negative value")
+	}
+	if got, ok := numberFloat(float32(12.5)); !ok || got != 12.5 {
+		t.Fatalf("numberFloat = (%f, %v)", got, ok)
+	}
+}

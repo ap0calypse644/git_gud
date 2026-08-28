@@ -14,8 +14,10 @@ import (
 
 	"github.com/ap0calypse644/git_gud/internal/config"
 	"github.com/ap0calypse644/git_gud/internal/opendota"
+	"github.com/ap0calypse644/git_gud/internal/processor"
 	"github.com/ap0calypse644/git_gud/internal/replay"
 	"github.com/ap0calypse644/git_gud/internal/storage"
+	"github.com/ap0calypse644/git_gud/internal/timeline"
 	"github.com/ap0calypse644/git_gud/internal/watcher"
 )
 
@@ -28,8 +30,8 @@ func main() {
 
 func run() error {
 	configPath := flag.String("config", "config.json", "path to JSON config")
-	once := flag.Bool("once", false, "run one discovery/replay-acquisition cycle and exit")
-	matchID := flag.Int64("match", 0, "process one match ID immediately (useful for historical testing)")
+	once := flag.Bool("once", false, "run one automatic discovery/processing cycle and exit")
+	matchID := flag.Int64("match", 0, "process one match ID immediately, including historical matches")
 	flag.Parse()
 
 	cfg, err := config.Load(*configPath)
@@ -45,19 +47,22 @@ func run() error {
 	replayHTTPClient := &http.Client{Timeout: cfg.Replays.DownloadTimeout.Duration()}
 	api := opendota.NewClient(cfg.OpenDota.BaseURL, cfg.OpenDota.APIKey, apiHTTPClient)
 	downloader := replay.NewDownloader(replayHTTPClient, cfg.Storage.Path, cfg.Replays.KeepCompressed)
+	timelineBuilder := timeline.NewBuilder(cfg.Storage.Path, cfg.Player.AccountID)
 	store := storage.New(filepath.Join(cfg.Storage.Path, "state.json"))
-	service := watcher.New(cfg, api, downloader, store, logger)
+	matchProcessor := processor.New(cfg, api, downloader, timelineBuilder, store, logger)
+	watchService := watcher.New(cfg, api, matchProcessor, store, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	if *matchID > 0 {
-		return service.ProcessMatch(ctx, *matchID)
+		_, err := matchProcessor.Process(ctx, *matchID, true)
+		return err
 	}
 	if *once {
-		return service.RunOnce(ctx)
+		return watchService.RunOnce(ctx)
 	}
-	if err := service.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+	if err := watchService.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 	return nil
