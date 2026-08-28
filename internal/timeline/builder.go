@@ -40,5 +40,6 @@ func (b *Builder) Build(_ context.Context, match opendota.Match, replayPath stri
 	if err != nil {
 		return "", err
 	}
+	parsed.Fights = ConsolidateFightWindows(parsed.Fights)
 	return WriteJSON(b.storageRoot, parsed)
 }
