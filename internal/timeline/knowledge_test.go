@@ -99,6 +99,13 @@ func TestWardVisionRangeWorldToTimelineScale(t *testing.T) {
 	}
 }
 
+func TestConservativeWardVisionRangeUsesSmallerPositiveRadius(t *testing.T) {
+	ward := WardInterval{DayVisionRange: 1800, NightVisionRange: 800}
+	if got := conservativeWardVisionRange(ward); got != 800 {
+		t.Fatalf("got %.0f, want conservative 800", got)
+	}
+}
+
 func TestDeriveKnowledgeSplitsLongSampleGaps(t *testing.T) {
 	player := &PlayerTimeline{
 		PlayerSlot: 128,
