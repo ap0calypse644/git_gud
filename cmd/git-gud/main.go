@@ -17,6 +17,7 @@ import (
 	"github.com/ap0calypse644/git_gud/internal/processor"
 	"github.com/ap0calypse644/git_gud/internal/replay"
 	"github.com/ap0calypse644/git_gud/internal/storage"
+	"github.com/ap0calypse644/git_gud/internal/timeline"
 	"github.com/ap0calypse644/git_gud/internal/watcher"
 )
 
@@ -46,8 +47,9 @@ func run() error {
 	replayHTTPClient := &http.Client{Timeout: cfg.Replays.DownloadTimeout.Duration()}
 	api := opendota.NewClient(cfg.OpenDota.BaseURL, cfg.OpenDota.APIKey, apiHTTPClient)
 	downloader := replay.NewDownloader(replayHTTPClient, cfg.Storage.Path, cfg.Replays.KeepCompressed)
+	timelineBuilder := timeline.NewBuilder(cfg.Storage.Path, cfg.Player.AccountID)
 	store := storage.New(filepath.Join(cfg.Storage.Path, "state.json"))
-	matchProcessor := processor.New(cfg, api, downloader, store, logger)
+	matchProcessor := processor.New(cfg, api, downloader, timelineBuilder, store, logger)
 	watchService := watcher.New(cfg, api, matchProcessor, store, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
