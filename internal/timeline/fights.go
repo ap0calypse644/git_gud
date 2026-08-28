@@ -162,9 +162,6 @@ func addFightMoment(a *fightAggregate, m fightMoment) {
 	if a.participants == nil {
 		a.participants = make(map[int]struct{})
 	}
-	if a.first == 0 && a.last == 0 && m.t != 0 {
-		a.first = m.t
-	}
 	if m.t < a.first {
 		a.first = m.t
 	}
