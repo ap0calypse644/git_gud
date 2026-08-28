@@ -44,5 +44,6 @@ func (b *Builder) Build(_ context.Context, match opendota.Match, replayPath stri
 	if parsed.Visibility.Events == nil {
 		parsed.Visibility.Events = []VisibilityEvent{}
 	}
+	parsed.Knowledge = DeriveKnowledge(&parsed)
 	return WriteJSON(b.storageRoot, parsed)
 }

@@ -17,6 +17,8 @@ type MatchTimeline struct {
 	Objectives       []ObjectiveEvent            `json:"objectives,omitempty"`
 	Fights           []FightWindow               `json:"fights,omitempty"`
 	Visibility       VisibilityTimeline          `json:"visibility"`
+	VisionSources    VisionSourceTimeline        `json:"vision_sources"`
+	Knowledge        KnowledgeTimeline           `json:"knowledge"`
 }
 
 type PlayerTimeline struct {
@@ -66,6 +68,79 @@ type VisibilityEvent struct {
 	VisibleByTeamMask int     `json:"visible_by_team_mask"`
 	VisibleToRadiant  bool    `json:"visible_to_radiant"`
 	VisibleToDire     bool    `json:"visible_to_dire"`
+}
+
+// VisionSourceTimeline contains replay-observed vision sources. These are raw
+// inputs for later visibility estimates, not proof that an enemy was seen.
+type VisionSourceTimeline struct {
+	Wards  []WardInterval     `json:"wards"`
+	Heroes []HeroVisionSample `json:"heroes"`
+}
+
+// WardInterval is one observer/sentry ward's active lifetime reconstructed
+// from its replay entity. Vision ranges are the raw Source 2 world-unit values
+// transmitted by the entity; X/Y use the timeline's cell-coordinate scale.
+// EndReason is intentionally conservative: a life-state transition does not by
+// itself tell us whether the ward was killed or naturally expired.
+type WardInterval struct {
+	EntityIndex      int32   `json:"entity_index"`
+	EntitySerial     int32   `json:"entity_serial"`
+	Kind             string  `json:"kind"` // observer | sentry
+	Team             int     `json:"team"`
+	OwnerRawPlayerID *int    `json:"owner_raw_player_id,omitempty"`
+	X                float64 `json:"x"`
+	Y                float64 `json:"y"`
+	StartT           float64 `json:"start_t"`
+	EndT             float64 `json:"end_t"`
+	EndReason        string  `json:"end_reason"`
+	DayVisionRange   float64 `json:"day_vision_range,omitempty"`
+	NightVisionRange float64 `json:"night_vision_range,omitempty"`
+	FOWTeam          int     `json:"fow_team,omitempty"`
+}
+
+// HeroVisionSample is a roughly 1 Hz replay fact for a primary hero acting as
+// a potential team vision source. Illusions and clones are deliberately
+// excluded for this first conservative source model.
+type HeroVisionSample struct {
+	T                float64 `json:"t"`
+	PlayerSlot       int     `json:"player_slot"`
+	Team             int     `json:"team"`
+	X                float64 `json:"x"`
+	Y                float64 `json:"y"`
+	Alive            bool    `json:"alive"`
+	DayVisionRange   float64 `json:"day_vision_range,omitempty"`
+	NightVisionRange float64 `json:"night_vision_range,omitempty"`
+}
+
+// KnowledgeTimeline is deliberately weaker than direct visibility. Its
+// intervals are geometry-derived estimates from replay-observed vision sources
+// and must not be promoted into confirmed player knowledge.
+type KnowledgeTimeline struct {
+	Team                int                           `json:"team"`
+	Method              string                        `json:"method"`
+	EstimatedVisibility []EstimatedVisibilityInterval `json:"estimated_visibility"`
+}
+
+// EstimatedVisibilityInterval is a contiguous run of enemy replay samples that
+// fall inside at least one friendly source's conservative nominal vision
+// radius. Terrain, trees, invisibility, temporary darkness and other FoW
+// mechanics can invalidate the estimate.
+type EstimatedVisibilityInterval struct {
+	PlayerSlot      int               `json:"player_slot"`
+	StartT          float64           `json:"start_t"`
+	EndT            float64           `json:"end_t"`
+	StartX          float64           `json:"start_x"`
+	StartY          float64           `json:"start_y"`
+	EndX            float64           `json:"end_x"`
+	EndY            float64           `json:"end_y"`
+	SampleCount     int               `json:"sample_count"`
+	SourceWards     []VisionSourceRef `json:"source_wards,omitempty"`
+	SourceHeroSlots []int             `json:"source_hero_slots,omitempty"`
+}
+
+type VisionSourceRef struct {
+	EntityIndex  int32 `json:"entity_index"`
+	EntitySerial int32 `json:"entity_serial"`
 }
 
 type DeathEvent struct {
