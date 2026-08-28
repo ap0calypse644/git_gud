@@ -36,6 +36,15 @@ func (f *fakeAcquirer) Acquire(_ context.Context, match opendota.Match) (string,
 	return filepath.Join("data", "replays", "test.dem"), nil
 }
 
+type fakeTimelineBuilder struct {
+	calls []int64
+}
+
+func (f *fakeTimelineBuilder) Build(_ context.Context, match opendota.Match, _ string) (string, error) {
+	f.calls = append(f.calls, match.MatchID)
+	return filepath.Join("data", "timelines", "test.json"), nil
+}
+
 func testConfig() config.Config {
 	cfg := config.Config{}
 	cfg.Player.AccountID = 256161923
@@ -59,13 +68,14 @@ func TestProcessDoesNotChangeWatcherBaseline(t *testing.T) {
 		42: {MatchID: 42, StartTime: time.Now().Unix(), ReplayURL: "https://example.test/42.dem.bz2"},
 	}}
 	acquirer := &fakeAcquirer{}
-	svc := New(cfg, api, acquirer, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	timelineBuilder := &fakeTimelineBuilder{}
+	svc := New(cfg, api, acquirer, timelineBuilder, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	result, err := svc.Process(context.Background(), 42, true)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != storage.StatusReplayDownloaded || result.ReplayPath == "" {
+	if result.Status != storage.StatusTimelineReady || result.ReplayPath == "" || result.TimelinePath == "" {
 		t.Fatalf("result = %#v", result)
 	}
 
@@ -76,8 +86,11 @@ func TestProcessDoesNotChangeWatcherBaseline(t *testing.T) {
 	if got.LastSeenMatchID != 100 {
 		t.Fatalf("manual processing changed baseline: got %d want 100", got.LastSeenMatchID)
 	}
-	if got.Match(42) == nil || got.Match(42).Status != storage.StatusReplayDownloaded {
+	if got.Match(42) == nil || got.Match(42).Status != storage.StatusTimelineReady {
 		t.Fatalf("match state = %#v", got.Match(42))
+	}
+	if len(timelineBuilder.calls) != 1 || timelineBuilder.calls[0] != 42 {
+		t.Fatalf("timeline calls = %#v", timelineBuilder.calls)
 	}
 }
 
@@ -89,7 +102,7 @@ func TestProcessRequestsParseThenAcquiresReplay(t *testing.T) {
 		43: {MatchID: 43, StartTime: now.Unix()},
 	}}
 	acquirer := &fakeAcquirer{}
-	svc := New(cfg, api, acquirer, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	svc := New(cfg, api, acquirer, nil, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	result, err := svc.Process(context.Background(), 43, true)
 	if err != nil {
