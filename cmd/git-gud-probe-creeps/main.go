@@ -37,7 +37,6 @@ type classProbe struct {
 	SampleFields        []string            `json:"sample_fields"`
 	SampleValues        map[string][]string `json:"sample_values"`
 	ResolvedEntityNames []string            `json:"resolved_entity_names"`
-	ResolvedUnitNames   []string            `json:"resolved_unit_names"`
 }
 
 type output struct {
@@ -84,7 +83,6 @@ func run() error {
 				SampleFields:        []string{},
 				SampleValues:        map[string][]string{},
 				ResolvedEntityNames: []string{},
-				ResolvedUnitNames:   []string{},
 			}
 			classes[className] = probe
 		}
@@ -112,16 +110,19 @@ func run() error {
 			}
 		}
 
+		// This field is the same entity-name index already used successfully by
+		// the hero parser. For lane creeps it resolves to stable class-like names
+		// such as npc_dota_creep_lane / npc_dota_creep_siege.
 		if idx, ok := int32Value(e.Get("m_pEntity.m_nameStringTableIndex")); ok {
 			if name, found := p.LookupStringByIndex("EntityNames", idx); found && name != "" {
 				probe.ResolvedEntityNames = appendDistinctLimited(probe.ResolvedEntityNames, name, maxSampleValuesPerField)
 			}
 		}
-		if idx, ok := int32Value(e.Get("m_iUnitNameIndex")); ok {
-			if name, found := p.LookupStringByIndex("EntityNames", idx); found && name != "" {
-				probe.ResolvedUnitNames = appendDistinctLimited(probe.ResolvedUnitNames, name, maxSampleValuesPerField)
-			}
-		}
+
+		// m_iUnitNameIndex is retained above as an opaque raw value only. Real
+		// replay validation showed that resolving it through EntityNames yields
+		// unrelated path-corner / ward-spot strings, so its string-table
+		// semantics are intentionally not guessed here.
 		return nil
 	})
 
