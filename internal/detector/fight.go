@@ -26,13 +26,21 @@ const (
 type FightAnalysis struct {
 	MatchID     int64             `json:"match_id"`
 	Assessments []FightAssessment `json:"assessments"`
-	Candidates  []Candidate       `json:"candidates"`
+	Candidates  []FightCandidate  `json:"candidates"`
+}
+
+type FightCandidate struct {
+	Type         string                `json:"type"`
+	T            float64               `json:"t"`
+	Confidence   string                `json:"confidence"`
+	BadFightJoin *BadFightJoinEvidence `json:"bad_fight_join,omitempty"`
+	MissedFight  *MissedFightEvidence  `json:"missed_fight,omitempty"`
 }
 
 type FightAssessment struct {
-	ObservedStartT float64                    `json:"observed_start_t"`
-	BadFightJoin   BadFightJoinAssessment     `json:"bad_fight_join"`
-	MissedFight    MissedFightAssessment      `json:"missed_fight"`
+	ObservedStartT float64                `json:"observed_start_t"`
+	BadFightJoin   BadFightJoinAssessment `json:"bad_fight_join"`
+	MissedFight    MissedFightAssessment  `json:"missed_fight"`
 }
 
 type BadFightJoinAssessment struct {
@@ -67,29 +75,29 @@ type MissedFightAssessment struct {
 }
 
 type MissedFightEvidence struct {
-	ObservedTimingAvailable  bool     `json:"observed_timing_available"`
-	TeamfightScale           bool     `json:"teamfight_scale"`
-	FightParticipants        int      `json:"fight_participants"`
-	FightDeaths              int      `json:"fight_deaths"`
-	FightHeroDamage          int64    `json:"fight_hero_damage"`
-	TargetInvolved           bool     `json:"target_involved"`
-	TargetStartSampleAvailable bool   `json:"target_start_sample_available"`
-	TargetAliveAtStart       bool     `json:"target_alive_at_start"`
-	TargetDistanceToCenter   *float64 `json:"target_distance_to_center,omitempty"`
-	ReviewRadiusWorld        float64  `json:"review_radius_world"`
-	ReviewRadiusTimeline     float64  `json:"review_radius_timeline"`
-	AlliedParticipantSlots   []int    `json:"allied_participant_slots"`
-	AlliedParticipants       int      `json:"allied_participants"`
-	MinAlliedParticipants    int      `json:"min_allied_participants"`
-	AliveTeammatesAtStart    int      `json:"alive_teammates_at_start"`
-	EstimatedVisibleEnemies  int      `json:"estimated_visible_enemies"`
+	ObservedTimingAvailable    bool     `json:"observed_timing_available"`
+	TeamfightScale             bool     `json:"teamfight_scale"`
+	FightParticipants          int      `json:"fight_participants"`
+	FightDeaths                int      `json:"fight_deaths"`
+	FightHeroDamage            int64    `json:"fight_hero_damage"`
+	TargetInvolved             bool     `json:"target_involved"`
+	TargetStartSampleAvailable bool     `json:"target_start_sample_available"`
+	TargetAliveAtStart         bool     `json:"target_alive_at_start"`
+	TargetDistanceToCenter     *float64 `json:"target_distance_to_center,omitempty"`
+	ReviewRadiusWorld          float64  `json:"review_radius_world"`
+	ReviewRadiusTimeline       float64  `json:"review_radius_timeline"`
+	AlliedParticipantSlots     []int    `json:"allied_participant_slots"`
+	AlliedParticipants         int      `json:"allied_participants"`
+	MinAlliedParticipants      int      `json:"min_allied_participants"`
+	AliveTeammatesAtStart      int      `json:"alive_teammates_at_start"`
+	EstimatedVisibleEnemies    int      `json:"estimated_visible_enemies"`
 }
 
 // AnalyzeFights emits low-confidence candidate judgments from the validated M8
 // target-fight contexts. It never queries enemy PlayerTimeline positions; enemy
 // context comes only from EnemyKnowledgeAtStart.
 func AnalyzeFights(tl *timeline.MatchTimeline) FightAnalysis {
-	out := FightAnalysis{Assessments: []FightAssessment{}, Candidates: []Candidate{}}
+	out := FightAnalysis{Assessments: []FightAssessment{}, Candidates: []FightCandidate{}}
 	if tl == nil {
 		return out
 	}
@@ -115,7 +123,7 @@ func AnalyzeFights(tl *timeline.MatchTimeline) FightAnalysis {
 			if ctx.TargetFirstInvolvementT != nil {
 				t = *ctx.TargetFirstInvolvementT
 			}
-			out.Candidates = append(out.Candidates, Candidate{
+			out.Candidates = append(out.Candidates, FightCandidate{
 				Type:         TypeBadFightJoinCandidate,
 				T:            t,
 				Confidence:   ConfidenceLow,
@@ -124,7 +132,7 @@ func AnalyzeFights(tl *timeline.MatchTimeline) FightAnalysis {
 		}
 		if missed.Candidate {
 			evidence := missed.Evidence
-			out.Candidates = append(out.Candidates, Candidate{
+			out.Candidates = append(out.Candidates, FightCandidate{
 				Type:        TypeMissedFightCandidate,
 				T:           ctx.ObservedStartT,
 				Confidence:  ConfidenceLow,
