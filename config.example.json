@@ -1,0 +1,28 @@
+{
+  "player": {
+    "account_id": 256161923
+  },
+  "opendota": {
+    "base_url": "https://api.opendota.com/api",
+    "api_key": ""
+  },
+  "http": {
+    "timeout": "30s"
+  },
+  "storage": {
+    "path": "./data"
+  },
+  "poll": {
+    "interval": "60s"
+  },
+  "watcher": {
+    "bootstrap_existing": false
+  },
+  "replays": {
+    "request_parse": true,
+    "retry_interval": "5m",
+    "retry_for": "168h",
+    "download_timeout": "10m",
+    "keep_compressed": false
+  }
+}
