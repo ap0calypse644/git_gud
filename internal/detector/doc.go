@@ -1,7 +1,8 @@
 // Package detector contains deterministic coaching candidates derived from
 // safe decision context. Detector code must not reconstruct enemy knowledge
 // from omniscient replay positions; it consumes the causal enemy-information
-// state already exposed by timeline.TargetDeathContext.
+// state already exposed by timeline.TargetDeathContext and
+// timeline.TargetFightContext.
 //
 // Candidate thresholds in this package are deliberately explicit and initially
 // low-confidence. They require synthetic boundary tests plus real validation on
