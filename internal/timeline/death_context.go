@@ -32,11 +32,14 @@ type TargetDeathContext struct {
 }
 
 // DeathFightContext copies the final consolidated fight window associated with
-// the target death. TimeFromFightStart is measured from the padded final fight
-// start because that is the stable window exposed by MatchTimeline.
+// the target death. StartT/EndT are padded; ObservedStartT/ObservedEndT are the
+// first/last combat moments retained by the fight detector. TimeFromFightStart
+// remains measured from the padded start for backward-compatible M6 semantics.
 type DeathFightContext struct {
 	StartT            float64 `json:"start_t"`
 	EndT              float64 `json:"end_t"`
+	ObservedStartT    float64 `json:"observed_start_t"`
+	ObservedEndT      float64 `json:"observed_end_t"`
 	CenterX            float64 `json:"center_x,omitempty"`
 	CenterY            float64 `json:"center_y,omitempty"`
 	Participants       []int   `json:"participants"`
@@ -142,6 +145,8 @@ func fightContextForDeath(fights []FightWindow, targetSlot int, t, x, y float64,
 	return &DeathFightContext{
 		StartT:            fight.StartT,
 		EndT:              fight.EndT,
+		ObservedStartT:    fight.ObservedStartT,
+		ObservedEndT:      fight.ObservedEndT,
 		CenterX:            fight.CenterX,
 		CenterY:            fight.CenterY,
 		Participants:       append([]int(nil), fight.Participants...),

@@ -228,6 +228,8 @@ func finalizeFight(timeline *MatchTimeline, a fightAggregate) (FightWindow, bool
 	w := FightWindow{
 		StartT:         start,
 		EndT:           end,
+		ObservedStartT: a.first,
+		ObservedEndT:   a.last,
 		Participants:   participants,
 		Deaths:         a.deaths,
 		HeroDamage:     a.damage,
