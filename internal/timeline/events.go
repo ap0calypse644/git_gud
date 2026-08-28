@@ -244,12 +244,19 @@ func (c *eventCollector) apply(out *MatchTimeline, gameStartTime float64) {
 		out.Objectives = append(out.Objectives, ObjectiveEvent{
 			T:            raw.timestamp - gameStartTime,
 			Type:         raw.typeName,
-			Actor:        raw.actor,
+			Actor:        cleanObjectiveActor(raw.actor),
 			Target:       raw.target,
 			AttackerTeam: raw.attackerTeam,
 			TargetTeam:   raw.targetTeam,
 		})
 	}
+}
+
+func cleanObjectiveActor(actor string) string {
+	if actor == "dota_unknown" {
+		return ""
+	}
+	return actor
 }
 
 func slotKey(slot int) string {
