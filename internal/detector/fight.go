@@ -166,7 +166,7 @@ func assessBadFightJoin(ctx timeline.TargetFightContext) BadFightJoinAssessment 
 		FirstInvolvementT:             copyFloat64Ptr(ctx.TargetFirstInvolvementT),
 		SecondsToFirstInvolvement:     copyFloat64Ptr(ctx.SecondsToFirstInvolvement),
 		MinDelaySeconds:               BadFightJoinMinDelaySeconds,
-		AlliedDeathsBeforeInvolvement: append([]int(nil), ctx.AlliedDeathsBeforeTargetInvolvement...),
+		AlliedDeathsBeforeInvolvement: append([]int{}, ctx.AlliedDeathsBeforeTargetInvolvement...),
 		TargetDeathT:                  copyFloat64Ptr(ctx.TargetDeathT),
 		MaxPostJoinSurvivalSeconds:    BadFightJoinMaxSurvivalSeconds,
 		TargetDamageDealt:             ctx.TargetDamageDealt,
