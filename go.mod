@@ -2,7 +2,10 @@ module github.com/ap0calypse644/git_gud
 
 go 1.23
 
-require github.com/dotabuff/manta v1.5.0
+require (
+	github.com/dotabuff/manta v1.5.0
+	github.com/klauspost/compress v1.18.4
+)
 
 require (
 	github.com/davecgh/go-spew v1.1.0 // indirect
