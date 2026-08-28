@@ -46,12 +46,15 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 	}
 
 	lastSampleSecond := make(map[int]int)
+	for slot := 0; slot < 5; slot++ {
+		lastSampleSecond[slot] = math.MinInt
+		lastSampleSecond[128+slot] = math.MinInt
+	}
+
 	var gameStartTime float64
 	var gameStartSet bool
 	var gameEndTime float64
 	var gameEndSet bool
-	var targetPlayerID = -1
-	var targetTeam int
 	var deaths []rawDeath
 
 	combatLogName := func(index uint32) string {
@@ -96,24 +99,25 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 			return nil
 		}
 
-		if className == "CDOTA_PlayerResource" && targetPlayerID < 0 {
-			for playerID := 0; playerID < 10; playerID++ {
-				steamID, ok := playerSteamID(e, playerID)
+		// CDOTA_PlayerResource uses a conventional global 0-9 player index.
+		// This is not the same value as a hero entity's m_iPlayerID, which
+		// uses even IDs (0,2,4,6,8 Radiant and 10,12,14,16,18 Dire).
+		if className == "CDOTA_PlayerResource" && out.TargetPlayerSlot < 0 {
+			for resourcePlayerID := 0; resourcePlayerID < 10; resourcePlayerID++ {
+				steamID, ok := playerSteamID(e, resourcePlayerID)
 				if !ok || steamID != targetSteamID {
 					continue
 				}
-				targetPlayerID = playerID
-				if team, ok := playerTeam(e, playerID); ok {
-					targetTeam = team
-				} else if playerID < 5 {
-					targetTeam = 2
-				} else {
-					targetTeam = 3
-				}
-				if out.TargetPlayerSlot < 0 {
-					if slot, ok := matchPlayerSlot(playerID, targetTeam); ok {
-						out.TargetPlayerSlot = slot
+				team, ok := playerTeam(e, resourcePlayerID)
+				if !ok {
+					if resourcePlayerID < 5 {
+						team = 2
+					} else {
+						team = 3
 					}
+				}
+				if slot, ok := resourcePlayerSlot(resourcePlayerID, team); ok {
+					out.TargetPlayerSlot = slot
 				}
 				break
 			}
@@ -130,7 +134,7 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 			return nil
 		}
 
-		playerID, ok := numberInt(e.Get("m_iPlayerID"))
+		rawPlayerID, ok := numberInt(e.Get("m_iPlayerID"))
 		if !ok {
 			return nil
 		}
@@ -138,7 +142,7 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 		if !ok {
 			return nil
 		}
-		slot, ok := matchPlayerSlot(playerID, team)
+		slot, ok := heroPlayerSlot(rawPlayerID, team)
 		if !ok {
 			return nil
 		}
@@ -148,7 +152,7 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 			return nil
 		}
 		second := int(math.Floor(matchTime))
-		if last, sampled := lastSampleSecond[slot]; sampled && last == second {
+		if lastSampleSecond[slot] == second {
 			return nil
 		}
 
@@ -184,7 +188,7 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 		if player == nil {
 			player = &PlayerTimeline{
 				PlayerSlot: slot,
-				PlayerID:   playerID,
+				PlayerID:   rawPlayerID,
 				Team:       team,
 				HeroClass:  className,
 			}
@@ -193,10 +197,6 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 		player.HeroClass = className
 		player.Samples = append(player.Samples, pt)
 		lastSampleSecond[slot] = second
-
-		if targetPlayerID == playerID && targetTeam == team && out.TargetPlayerSlot < 0 {
-			out.TargetPlayerSlot = slot
-		}
 		return nil
 	})
 
@@ -267,7 +267,9 @@ func playerTeam(e *manta.Entity, playerID int) (int, bool) {
 	return 0, false
 }
 
-func matchPlayerSlot(playerID, team int) (int, bool) {
+// resourcePlayerSlot maps CDOTA_PlayerResource's global 0-9 player index to
+// OpenDota/Dota's player_slot convention.
+func resourcePlayerSlot(playerID, team int) (int, bool) {
 	switch team {
 	case 2:
 		if playerID >= 0 && playerID < 5 {
@@ -277,10 +279,32 @@ func matchPlayerSlot(playerID, team int) (int, bool) {
 		if playerID >= 5 && playerID < 10 {
 			return 128 + playerID - 5, true
 		}
-		// Older/demo variants can expose a team-relative player ID.
+		// Some older/demo variants expose a team-relative PlayerResource ID.
 		if playerID >= 0 && playerID < 5 {
 			return 128 + playerID, true
 		}
+	}
+	return 0, false
+}
+
+// heroPlayerSlot maps a hero entity's raw m_iPlayerID/m_iTeamNum pair to
+// OpenDota/Dota's player_slot convention. Source 2 hero entities use even
+// player IDs: 0,2,4,6,8 for Radiant and 10,12,14,16,18 for Dire.
+func heroPlayerSlot(playerID, team int) (int, bool) {
+	if playerID%2 != 0 {
+		return 0, false
+	}
+	switch team {
+	case 2:
+		if playerID < 0 || playerID > 8 {
+			return 0, false
+		}
+		return playerID / 2, true
+	case 3:
+		if playerID < 10 || playerID > 18 {
+			return 0, false
+		}
+		return 128 + (playerID-10)/2, true
 	}
 	return 0, false
 }
