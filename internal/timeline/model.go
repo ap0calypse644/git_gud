@@ -16,6 +16,7 @@ type MatchTimeline struct {
 	Buybacks            []BuybackEvent              `json:"buybacks,omitempty"`
 	Objectives          []ObjectiveEvent             `json:"objectives,omitempty"`
 	Fights              []FightWindow                `json:"fights,omitempty"`
+	CreepClusters       CreepClusterTimeline         `json:"creep_clusters"`
 	Visibility          VisibilityTimeline           `json:"visibility"`
 	VisionSources       VisionSourceTimeline         `json:"vision_sources"`
 	Knowledge           KnowledgeTimeline            `json:"knowledge"`
