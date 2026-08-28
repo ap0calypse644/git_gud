@@ -11,11 +11,33 @@ import (
 	"github.com/dotabuff/manta"
 )
 
+const maxSampleValuesPerField = 8
+
+var creepProbeValueFields = []string{
+	"m_iTeamNum",
+	"m_iUnitType",
+	"m_iUnitNameIndex",
+	"m_pEntity.m_nameStringTableIndex",
+	"CBodyComponent.m_name",
+	"m_szUnitLabel",
+	"m_iHealth",
+	"m_iMaxHealth",
+	"m_lifeState",
+	"m_bIsWaitingToSpawn",
+	"CBodyComponent.m_cellX",
+	"CBodyComponent.m_cellY",
+	"CBodyComponent.m_vecX",
+	"CBodyComponent.m_vecY",
+}
+
 type classProbe struct {
-	ClassName    string   `json:"class_name"`
-	Created      int      `json:"created"`
-	Updated      int      `json:"updated"`
-	SampleFields []string `json:"sample_fields"`
+	ClassName           string              `json:"class_name"`
+	Created             int                 `json:"created"`
+	Updated             int                 `json:"updated"`
+	SampleFields        []string            `json:"sample_fields"`
+	SampleValues        map[string][]string `json:"sample_values"`
+	ResolvedEntityNames []string            `json:"resolved_entity_names"`
+	ResolvedUnitNames   []string            `json:"resolved_unit_names"`
 }
 
 type output struct {
@@ -57,7 +79,13 @@ func run() error {
 
 		probe := classes[className]
 		if probe == nil {
-			probe = &classProbe{ClassName: className, SampleFields: []string{}}
+			probe = &classProbe{
+				ClassName:           className,
+				SampleFields:        []string{},
+				SampleValues:        map[string][]string{},
+				ResolvedEntityNames: []string{},
+				ResolvedUnitNames:   []string{},
+			}
 			classes[className] = probe
 		}
 		if op.Flag(manta.EntityOpCreated) {
@@ -74,6 +102,25 @@ func run() error {
 				probe.SampleFields = append(probe.SampleFields, key)
 			}
 			sort.Strings(probe.SampleFields)
+		}
+
+		for _, field := range creepProbeValueFields {
+			if value := e.Get(field); value != nil {
+				probe.SampleValues[field] = appendDistinctLimited(
+					probe.SampleValues[field], fmt.Sprint(value), maxSampleValuesPerField,
+				)
+			}
+		}
+
+		if idx, ok := int32Value(e.Get("m_pEntity.m_nameStringTableIndex")); ok {
+			if name, found := p.LookupStringByIndex("EntityNames", idx); found && name != "" {
+				probe.ResolvedEntityNames = appendDistinctLimited(probe.ResolvedEntityNames, name, maxSampleValuesPerField)
+			}
+		}
+		if idx, ok := int32Value(e.Get("m_iUnitNameIndex")); ok {
+			if name, found := p.LookupStringByIndex("EntityNames", idx); found && name != "" {
+				probe.ResolvedUnitNames = appendDistinctLimited(probe.ResolvedUnitNames, name, maxSampleValuesPerField)
+			}
 		}
 		return nil
 	})
@@ -99,4 +146,33 @@ func run() error {
 func possibleLaneCreepClass(className string) bool {
 	name := strings.ToLower(className)
 	return strings.Contains(name, "creep") || strings.Contains(name, "lane")
+}
+
+func appendDistinctLimited(values []string, value string, limit int) []string {
+	for _, existing := range values {
+		if existing == value {
+			return values
+		}
+	}
+	if len(values) >= limit {
+		return values
+	}
+	return append(values, value)
+}
+
+func int32Value(value any) (int32, bool) {
+	switch v := value.(type) {
+	case int32:
+		return v, true
+	case int:
+		return int32(v), true
+	case int64:
+		return int32(v), true
+	case uint32:
+		return int32(v), true
+	case uint64:
+		return int32(v), true
+	default:
+		return 0, false
+	}
 }
