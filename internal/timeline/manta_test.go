@@ -2,7 +2,33 @@ package timeline
 
 import "testing"
 
-func TestMatchPlayerSlot(t *testing.T) {
+func TestHeroPlayerSlot(t *testing.T) {
+	tests := []struct {
+		playerID int
+		team     int
+		want     int
+		ok       bool
+	}{
+		{playerID: 0, team: 2, want: 0, ok: true},
+		{playerID: 2, team: 2, want: 1, ok: true},
+		{playerID: 4, team: 2, want: 2, ok: true},
+		{playerID: 8, team: 2, want: 4, ok: true},
+		{playerID: 10, team: 3, want: 128, ok: true},
+		{playerID: 12, team: 3, want: 129, ok: true},
+		{playerID: 18, team: 3, want: 132, ok: true},
+		{playerID: 1, team: 2, ok: false},
+		{playerID: 9, team: 2, ok: false},
+		{playerID: 8, team: 3, ok: false},
+	}
+	for _, tc := range tests {
+		got, ok := heroPlayerSlot(tc.playerID, tc.team)
+		if ok != tc.ok || (ok && got != tc.want) {
+			t.Fatalf("heroPlayerSlot(%d, %d) = (%d, %v), want (%d, %v)", tc.playerID, tc.team, got, ok, tc.want, tc.ok)
+		}
+	}
+}
+
+func TestResourcePlayerSlot(t *testing.T) {
 	tests := []struct {
 		playerID int
 		team     int
@@ -17,9 +43,9 @@ func TestMatchPlayerSlot(t *testing.T) {
 		{playerID: 8, team: 2, ok: false},
 	}
 	for _, tc := range tests {
-		got, ok := matchPlayerSlot(tc.playerID, tc.team)
+		got, ok := resourcePlayerSlot(tc.playerID, tc.team)
 		if ok != tc.ok || (ok && got != tc.want) {
-			t.Fatalf("matchPlayerSlot(%d, %d) = (%d, %v), want (%d, %v)", tc.playerID, tc.team, got, ok, tc.want, tc.ok)
+			t.Fatalf("resourcePlayerSlot(%d, %d) = (%d, %v), want (%d, %v)", tc.playerID, tc.team, got, ok, tc.want, tc.ok)
 		}
 	}
 }
