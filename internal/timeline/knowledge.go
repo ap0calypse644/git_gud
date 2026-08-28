@@ -70,7 +70,8 @@ func DeriveKnowledge(tl *MatchTimeline) KnowledgeTimeline {
 // EnemyKnowledgeAt reconstructs the estimator's information state at an
 // arbitrary match time. Crucially, once an enemy leaves estimated vision it
 // exposes only the last estimated-seen position and its age, never the enemy's
-// later omniscient replay position.
+// later omniscient replay position. The last-seen anchor inherits the same
+// conservative/estimated status as the visibility interval it came from.
 func EnemyKnowledgeAt(k KnowledgeTimeline, playerSlot int, t float64) EnemyKnowledgeState {
 	state := EnemyKnowledgeState{
 		PlayerSlot: playerSlot,
