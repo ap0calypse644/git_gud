@@ -46,11 +46,6 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 	}
 
 	lastSampleSecond := make(map[int]int)
-	for slot := 0; slot < 5; slot++ {
-		lastSampleSecond[slot] = math.MinInt
-		lastSampleSecond[128+slot] = math.MinInt
-	}
-
 	var gameStartTime float64
 	var gameStartSet bool
 	var gameEndTime float64
@@ -153,7 +148,7 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 			return nil
 		}
 		second := int(math.Floor(matchTime))
-		if lastSampleSecond[slot] == second {
+		if last, sampled := lastSampleSecond[slot]; sampled && last == second {
 			return nil
 		}
 
