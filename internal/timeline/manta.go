@@ -134,9 +134,8 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 		}
 
 		// M12 derives compact same-team creep spatial clusters directly during
-		// replay parsing. The collector ignores every class except the two lane
-		// creep classes validated by M11, so hero and unrelated entity callbacks
-		// are cheap no-ops here.
+		// replay parsing. M13 reuses the same validated creep callbacks while
+		// retaining observed activation cohorts for lane-wave identity.
 		if gameStartSet && !gameEndSet {
 			matchTime := float64(p.NetTick)/tickRate - gameStartTime
 			if matchTime >= 0 {
@@ -283,6 +282,7 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 	}
 
 	out.CreepClusters = creeps.finalize(out.DurationSeconds)
+	out.LaneWaves = creeps.finalizeLaneWaves(out.DurationSeconds)
 	events.apply(&out, gameStartTime)
 	out.Fights = DeriveFightWindows(&out)
 
