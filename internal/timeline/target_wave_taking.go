@@ -7,13 +7,14 @@ import (
 )
 
 const (
-	targetWaveTakingMethod                   = "enemy_lane_wave_proximity_and_observed_depletion_v1"
-	targetWaveTakingProximityRadiusWorld     = 1600.0
-	targetWaveTakingProximityRadiusTimeline  = targetWaveTakingProximityRadiusWorld / 128.0
-	targetWaveTakingSampleMaxAgeSeconds      = 1.5
-	targetWaveTakingMaxContactGapSeconds     = 1.5
-	targetWaveTakingMinContactSamples        = 3
-	targetWaveTakingMinObservedCreepLoss     = 1
+	targetWaveTakingMethod                  = "enemy_lane_wave_proximity_and_depletion_bounded_v2"
+	targetWaveTakingProximityRadiusWorld    = 1600.0
+	targetWaveTakingProximityRadiusTimeline = targetWaveTakingProximityRadiusWorld / 128.0
+	targetWaveTakingSampleMaxAgeSeconds     = 1.5
+	targetWaveTakingMaxContactGapSeconds    = 1.5
+	targetWaveTakingMinContactSamples       = 3
+	targetWaveTakingMinObservedCreepLoss    = 1
+	targetWaveTakingDepletionContextSamples = 1
 )
 
 // TargetWaveTakingTimeline is deterministic derived context for periods where
@@ -22,22 +23,27 @@ const (
 // taking a wave, not proof that the player personally last-hit or damaged any
 // creep. Later danger/overstay detectors may consume these periods as context.
 type TargetWaveTakingTimeline struct {
-	Available                 bool                     `json:"available"`
-	Method                    string                   `json:"method"`
-	ProximityRadiusWorld      float64                  `json:"proximity_radius_world"`
-	SampleMaxAgeSeconds       float64                  `json:"sample_max_age_seconds"`
-	MinContactSamples         int                      `json:"min_contact_samples"`
-	MinObservedCreepLoss      int                      `json:"min_observed_creep_loss"`
-	ExposurePeriodsObserved   int                      `json:"exposure_periods_observed"`
-	RejectedTooShort          int                      `json:"rejected_too_short"`
-	RejectedNoDepletion       int                      `json:"rejected_no_depletion"`
-	Periods                   []TargetWaveTakingPeriod `json:"periods"`
+	Available                   bool                     `json:"available"`
+	Method                      string                   `json:"method"`
+	ProximityRadiusWorld        float64                  `json:"proximity_radius_world"`
+	SampleMaxAgeSeconds         float64                  `json:"sample_max_age_seconds"`
+	MinContactSamples           int                      `json:"min_contact_samples"`
+	MinObservedCreepLoss        int                      `json:"min_observed_creep_loss"`
+	DepletionContextSamples     int                      `json:"depletion_context_samples"`
+	ExposurePeriodsObserved     int                      `json:"exposure_periods_observed"`
+	RejectedTooShort            int                      `json:"rejected_too_short"`
+	RejectedNoDepletion         int                      `json:"rejected_no_depletion"`
+	LeadingContactSamplesTrimmed  int                    `json:"leading_contact_samples_trimmed"`
+	TrailingContactSamplesTrimmed int                    `json:"trailing_contact_samples_trimmed"`
+	Periods                     []TargetWaveTakingPeriod `json:"periods"`
 }
 
-// TargetWaveTakingPeriod summarizes one contiguous proximity run against one
-// reconstructed enemy lane wave. ObservedCreepLoss is the sum of positive
-// second-to-second creep-count decreases during the run; it does not attribute
-// those deaths to the target player.
+// TargetWaveTakingPeriod summarizes the depletion-supported portion of one
+// contiguous proximity exposure to a reconstructed enemy lane wave.
+// ExposureStartT/ExposureEndT retain the full raw proximity run for audit. The
+// primary StartT/EndT are bounded around the first/last observed creep-count
+// decrease so a surviving straggler cannot keep a wave-taking period open for
+// tens of seconds after depletion stopped.
 type TargetWaveTakingPeriod struct {
 	WaveID                    string  `json:"wave_id"`
 	Lane                      string  `json:"lane"`
@@ -47,6 +53,11 @@ type TargetWaveTakingPeriod struct {
 	EndT                      float64 `json:"end_t"`
 	DurationSeconds           float64 `json:"duration_seconds"`
 	ContactSamples            int     `json:"contact_samples"`
+	ExposureStartT            float64 `json:"exposure_start_t"`
+	ExposureEndT              float64 `json:"exposure_end_t"`
+	ExposureContactSamples    int     `json:"exposure_contact_samples"`
+	FirstDepletionT           float64 `json:"first_depletion_t"`
+	LastDepletionT            float64 `json:"last_depletion_t"`
 
 	StartCreepCount           int `json:"start_creep_count"`
 	EndCreepCount             int `json:"end_creep_count"`
@@ -83,17 +94,19 @@ type targetWaveContact struct {
 }
 
 // DeriveTargetWaveTaking uses only the target's causal hero samples and M13's
-// reconstructed enemy lane-wave samples. Friendly waves are ignored. A period
-// is emitted only when at least three consecutive proximity samples exist and
-// at least one creep-count decrease is observed while the target is nearby.
+// reconstructed enemy lane-wave samples. Friendly waves are ignored. A raw
+// exposure must contain at least three consecutive proximity samples and at
+// least one creep-count decrease. Accepted output is then trimmed around the
+// observed depletion activity while retaining the raw exposure bounds.
 func DeriveTargetWaveTaking(tl *MatchTimeline) TargetWaveTakingTimeline {
 	out := TargetWaveTakingTimeline{
-		Method:               targetWaveTakingMethod,
-		ProximityRadiusWorld: targetWaveTakingProximityRadiusWorld,
-		SampleMaxAgeSeconds:  targetWaveTakingSampleMaxAgeSeconds,
-		MinContactSamples:    targetWaveTakingMinContactSamples,
-		MinObservedCreepLoss: targetWaveTakingMinObservedCreepLoss,
-		Periods:              []TargetWaveTakingPeriod{},
+		Method:                  targetWaveTakingMethod,
+		ProximityRadiusWorld:    targetWaveTakingProximityRadiusWorld,
+		SampleMaxAgeSeconds:     targetWaveTakingSampleMaxAgeSeconds,
+		MinContactSamples:       targetWaveTakingMinContactSamples,
+		MinObservedCreepLoss:    targetWaveTakingMinObservedCreepLoss,
+		DepletionContextSamples: targetWaveTakingDepletionContextSamples,
+		Periods:                 []TargetWaveTakingPeriod{},
 	}
 	if tl == nil || !tl.LaneWaves.Available {
 		return out
@@ -123,12 +136,26 @@ func DeriveTargetWaveTaking(tl *MatchTimeline) TargetWaveTakingTimeline {
 				return
 			}
 
-			period := summarizeTargetWaveTakingPeriod(wave, contacts)
+			bounded, firstDepletionT, lastDepletionT, leadingTrimmed, trailingTrimmed, ok := depletionBoundedContacts(contacts)
+			if !ok {
+				out.RejectedNoDepletion++
+				contacts = contacts[:0]
+				return
+			}
+			out.LeadingContactSamplesTrimmed += leadingTrimmed
+			out.TrailingContactSamplesTrimmed += trailingTrimmed
+
+			period := summarizeTargetWaveTakingPeriod(wave, bounded)
 			if period.ObservedCreepLoss < targetWaveTakingMinObservedCreepLoss {
 				out.RejectedNoDepletion++
 				contacts = contacts[:0]
 				return
 			}
+			period.ExposureStartT = contacts[0].t
+			period.ExposureEndT = contacts[len(contacts)-1].t
+			period.ExposureContactSamples = len(contacts)
+			period.FirstDepletionT = firstDepletionT
+			period.LastDepletionT = lastDepletionT
 			out.Periods = append(out.Periods, period)
 			contacts = contacts[:0]
 		}
@@ -174,6 +201,51 @@ func DeriveTargetWaveTaking(tl *MatchTimeline) TargetWaveTakingTimeline {
 		return out.Periods[i].WaveID < out.Periods[j].WaveID
 	})
 	return out
+}
+
+// depletionBoundedContacts keeps a small amount of proximity context around
+// the first and last actual count decrease. It never widens beyond the raw
+// exposure. If necessary it expands by nearby contacts only to preserve the
+// configured minimum sample evidence.
+func depletionBoundedContacts(contacts []targetWaveContact) ([]targetWaveContact, float64, float64, int, int, bool) {
+	if len(contacts) < 2 {
+		return nil, 0, 0, 0, 0, false
+	}
+	firstLossIndex, lastLossIndex := -1, -1
+	for i := 1; i < len(contacts); i++ {
+		if contacts[i-1].creepCount > contacts[i].creepCount {
+			if firstLossIndex < 0 {
+				firstLossIndex = i
+			}
+			lastLossIndex = i
+		}
+	}
+	if firstLossIndex < 0 {
+		return nil, 0, 0, 0, 0, false
+	}
+
+	start := firstLossIndex - 1 - targetWaveTakingDepletionContextSamples
+	if start < 0 {
+		start = 0
+	}
+	end := lastLossIndex + targetWaveTakingDepletionContextSamples
+	if end >= len(contacts) {
+		end = len(contacts) - 1
+	}
+	for end-start+1 < targetWaveTakingMinContactSamples && start > 0 {
+		start--
+	}
+	for end-start+1 < targetWaveTakingMinContactSamples && end < len(contacts)-1 {
+		end++
+	}
+
+	bounded := contacts[start : end+1]
+	return bounded,
+		contacts[firstLossIndex].t,
+		contacts[lastLossIndex].t,
+		start,
+		len(contacts) - 1 - end,
+		true
 }
 
 func freshHeroSampleAtOrBefore(player *PlayerTimeline, t, maxAge float64) (HeroSample, bool) {
