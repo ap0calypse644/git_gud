@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	creepClusterMethod         = "same_team_lane_and_siege_creep_connected_components_1200_world_1hz"
-	creepClusterRadiusWorld   = 1200.0
+	creepClusterMethod          = "same_team_lane_and_siege_creep_connected_components_1200_world_1hz"
+	creepClusterRadiusWorld    = 1200.0
 	creepClusterRadiusTimeline = creepClusterRadiusWorld / 128.0
 )
 
@@ -19,21 +19,25 @@ type creepEntityKey struct {
 }
 
 type creepState struct {
-	key     creepEntityKey
-	team    int
-	kind    string // lane | siege
-	x       float64
-	y       float64
-	alive   bool
-	waiting bool
+	key          creepEntityKey
+	team         int
+	kind         string // lane | siege
+	x            float64
+	y            float64
+	alive        bool
+	waiting      bool
+	cohortSecond int
+	cohortKnown  bool
 }
 
 type creepCollector struct {
 	states             map[creepEntityKey]creepState
 	frames             []CreepClusterFrame
+	waveFrames         []rawWaveFrame
 	started            bool
 	lastSnapshotSecond int
 	validStateObserved bool
+	activationEvidence LaneWaveActivationEvidence
 }
 
 func newCreepCollector() *creepCollector {
@@ -79,8 +83,46 @@ func (c *creepCollector) observe(e *manta.Entity, op manta.EntityOp, matchTime f
 		// Preserve the last valid state rather than fabricating a replacement.
 		return
 	}
+
+	previous, seen := c.states[key]
+	var source string
+	state, source = assignCreepActivation(previous, seen, state, op.Flag(manta.EntityOpCreated), matchTime)
+	switch source {
+	case "waiting_transition":
+		c.activationEvidence.WaitingTransitions++
+	case "created_active":
+		c.activationEvidence.CreatedActive++
+	case "first_observed_active":
+		c.activationEvidence.FirstObservedActive++
+	}
+
 	c.validStateObserved = true
 	c.states[key] = state
+}
+
+func assignCreepActivation(previous creepState, seen bool, state creepState, created bool, matchTime float64) (creepState, string) {
+	if state.waiting {
+		return state, ""
+	}
+	if seen && previous.cohortKnown {
+		state.cohortSecond = previous.cohortSecond
+		state.cohortKnown = true
+		return state, ""
+	}
+
+	// Cohorts are an observed replay reconstruction, not a hard-coded Dota
+	// spawn schedule. Rounding to the nearest second absorbs callback ordering
+	// within one spawn without assuming a 30-second cadence.
+	state.cohortSecond = int(math.Floor(matchTime + 0.5))
+	state.cohortKnown = true
+
+	if seen && previous.waiting {
+		return state, "waiting_transition"
+	}
+	if created {
+		return state, "created_active"
+	}
+	return state, "first_observed_active"
 }
 
 func readCreepState(e *manta.Entity, key creepEntityKey, kind string) (creepState, bool) {
@@ -134,6 +176,10 @@ func (c *creepCollector) advance(second int) {
 			T:        float64(snapshotSecond),
 			Clusters: clusterCreepStates(c.states, creepClusterRadiusTimeline),
 		})
+		c.waveFrames = append(c.waveFrames, rawWaveFrame{
+			T:          float64(snapshotSecond),
+			Components: cohortCreepComponents(c.states, creepClusterRadiusTimeline),
+		})
 	}
 	c.lastSnapshotSecond = second
 }
@@ -154,6 +200,13 @@ func (c *creepCollector) finalize(duration float64) CreepClusterTimeline {
 		ClusterRadiusTimeline: creepClusterRadiusTimeline,
 		Frames:                frames,
 	}
+}
+
+func (c *creepCollector) finalizeLaneWaves(duration float64) LaneWaveTimeline {
+	if duration >= 0 {
+		c.advance(int(math.Floor(duration)))
+	}
+	return deriveLaneWaveTimeline(c.waveFrames, c.activationEvidence, c.validStateObserved)
 }
 
 func clusterCreepStates(states map[creepEntityKey]creepState, radius float64) []CreepCluster {
