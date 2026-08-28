@@ -22,16 +22,17 @@ type ParseOptions struct {
 }
 
 type rawDeath struct {
-	timestamp float64
-	attacker  string
-	victim    string
-	inflictor string
+	timestamp       float64
+	attacker        string
+	victim          string
+	inflictor       string
+	assistPlayerIDs []int32
 }
 
 // Parse consumes a decompressed Source 2 replay and returns deterministic,
-// roughly one-second hero snapshots. The parser records all ten heroes because
-// later coaching needs the map context around the configured player, not only
-// the player's own coordinates.
+// roughly one-second hero snapshots plus exact replay-derived events. The
+// parser records all ten heroes because later coaching needs the map context
+// around the configured player, not only the player's own coordinates.
 func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 	p, err := manta.NewStreamParser(r)
 	if err != nil {
@@ -57,6 +58,8 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 	var gameEndSet bool
 	var deaths []rawDeath
 
+	events := newEventCollector(p)
+
 	combatLogName := func(index uint32) string {
 		name, _ := p.LookupStringByIndex("CombatLogNames", int32(index))
 		return strings.TrimPrefix(name, "item_")
@@ -70,10 +73,11 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 			return nil
 		}
 		deaths = append(deaths, rawDeath{
-			timestamp: float64(m.GetTimestamp()),
-			attacker:  combatLogName(m.GetAttackerName()),
-			victim:    combatLogName(m.GetTargetName()),
-			inflictor: combatLogName(m.GetInflictorName()),
+			timestamp:       float64(m.GetTimestamp()),
+			attacker:        combatLogName(m.GetAttackerName()),
+			victim:          combatLogName(m.GetTargetName()),
+			inflictor:       combatLogName(m.GetInflictorName()),
+			assistPlayerIDs: m.GetAssistPlayers(),
 		})
 		return nil
 	})
@@ -100,26 +104,29 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 		}
 
 		// CDOTA_PlayerResource uses a conventional global 0-9 player index.
-		// This is not the same value as a hero entity's m_iPlayerID, which
-		// uses even IDs (0,2,4,6,8 Radiant and 10,12,14,16,18 Dire).
-		if className == "CDOTA_PlayerResource" && out.TargetPlayerSlot < 0 {
-			for resourcePlayerID := 0; resourcePlayerID < 10; resourcePlayerID++ {
-				steamID, ok := playerSteamID(e, resourcePlayerID)
-				if !ok || steamID != targetSteamID {
-					continue
-				}
-				team, ok := playerTeam(e, resourcePlayerID)
-				if !ok {
-					if resourcePlayerID < 5 {
-						team = 2
-					} else {
-						team = 3
+		// Capture its team mapping even when OpenDota already supplied the
+		// target slot because buyback and assist records use this numbering.
+		if className == "CDOTA_PlayerResource" {
+			events.observePlayerResource(e)
+			if out.TargetPlayerSlot < 0 {
+				for resourcePlayerID := 0; resourcePlayerID < 10; resourcePlayerID++ {
+					steamID, ok := playerSteamID(e, resourcePlayerID)
+					if !ok || steamID != targetSteamID {
+						continue
 					}
+					team, ok := playerTeam(e, resourcePlayerID)
+					if !ok {
+						if resourcePlayerID < 5 {
+							team = 2
+						} else {
+							team = 3
+						}
+					}
+					if slot, ok := resourcePlayerSlot(resourcePlayerID, team); ok {
+						out.TargetPlayerSlot = slot
+					}
+					break
 				}
-				if slot, ok := resourcePlayerSlot(resourcePlayerID, team); ok {
-					out.TargetPlayerSlot = slot
-				}
-				break
 			}
 			return nil
 		}
@@ -128,9 +135,6 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 			return nil
 		}
 		if !op.Flag(manta.EntityOpUpdated) && !op.Flag(manta.EntityOpCreated) {
-			return nil
-		}
-		if !gameStartSet || gameEndSet {
 			return nil
 		}
 
@@ -144,6 +148,15 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 		}
 		slot, ok := heroPlayerSlot(rawPlayerID, team)
 		if !ok {
+			return nil
+		}
+
+		// Resolve the exact EntityNames string used by the combat log. This is
+		// deliberately done before the in-game sampling gate so pre-game hero
+		// entities can establish combat-log attribution too.
+		events.observeHero(e, slot)
+
+		if !gameStartSet || gameEndSet {
 			return nil
 		}
 
@@ -217,12 +230,24 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 
 	for _, d := range deaths {
 		t := d.timestamp - gameStartTime
-		out.Deaths = append(out.Deaths, DeathEvent{
+		death := DeathEvent{
 			T:         t,
 			Attacker:  d.attacker,
 			Victim:    d.victim,
 			Inflictor: d.inflictor,
-		})
+		}
+		if slot, ok := events.heroSlot(d.attacker); ok {
+			death.AttackerSlot = intPtr(slot)
+		}
+		if slot, ok := events.heroSlot(d.victim); ok {
+			death.VictimSlot = intPtr(slot)
+		}
+		for _, playerID := range d.assistPlayerIDs {
+			if slot, ok := events.resourceSlot(int(playerID)); ok {
+				death.AssistSlots = append(death.AssistSlots, slot)
+			}
+		}
+		out.Deaths = append(out.Deaths, death)
 		if t > out.DurationSeconds {
 			out.DurationSeconds = t
 		}
@@ -238,8 +263,13 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 		}
 	}
 
+	events.apply(&out, gameStartTime)
+	out.Fights = DeriveFightWindows(&out)
+
 	return out, nil
 }
+
+func intPtr(v int) *int { return &v }
 
 func playerSteamID(e *manta.Entity, playerID int) (uint64, bool) {
 	fields := []string{
