@@ -1,6 +1,7 @@
 package replay
 
 import (
+	"bytes"
 	"compress/bzip2"
 	"context"
 	"errors"
@@ -13,6 +14,12 @@ import (
 	"strings"
 
 	"github.com/ap0calypse644/git_gud/internal/opendota"
+	"github.com/klauspost/compress/zstd"
+)
+
+var (
+	rawDEMMagic = []byte{'P', 'B', 'D', 'E', 'M', 'S', '2', 0}
+	zstdMagic   = []byte{0x28, 0xB5, 0x2F, 0xFD}
 )
 
 type HTTPStatusError struct {
@@ -64,22 +71,27 @@ func (d *Downloader) Acquire(ctx context.Context, match opendota.Match) (string,
 		return finalDEM, nil
 	}
 
-	compressedPath := filepath.Join(dir, fmt.Sprintf("%d.dem.bz2", match.MatchID))
-	if _, err := os.Stat(compressedPath); errors.Is(err, os.ErrNotExist) {
-		if err := d.download(ctx, replayURL, compressedPath); err != nil {
+	// Valve historically served bzip2 under a .dem.bz2 URL, but modern
+	// replay servers can return Zstandard while retaining that URL suffix.
+	// Store the raw response under a format-neutral name and detect its
+	// contents by magic bytes before decompression.
+	downloadedPath := filepath.Join(dir, fmt.Sprintf("%d.dem.download", match.MatchID))
+	if _, err := os.Stat(downloadedPath); errors.Is(err, os.ErrNotExist) {
+		if err := d.download(ctx, replayURL, downloadedPath); err != nil {
 			return "", err
 		}
 	} else if err != nil {
-		return "", fmt.Errorf("stat compressed replay: %w", err)
+		return "", fmt.Errorf("stat downloaded replay: %w", err)
 	}
 
-	if err := decompressBzip2(compressedPath, finalDEM); err != nil {
-		// A truncated/corrupt completed download must not poison every future retry.
-		_ = os.Remove(compressedPath)
+	if err := decompressReplay(downloadedPath, finalDEM); err != nil {
+		// A truncated, corrupt, or unexpected completed download must not
+		// poison every future retry.
+		_ = os.Remove(downloadedPath)
 		return "", err
 	}
 	if !d.keepCompressed {
-		_ = os.Remove(compressedPath)
+		_ = os.Remove(downloadedPath)
 	}
 	return finalDEM, nil
 }
@@ -107,7 +119,7 @@ func (d *Downloader) download(ctx context.Context, rawURL, destination string) e
 		return &HTTPStatusError{URL: u.Redacted(), StatusCode: resp.StatusCode}
 	}
 
-	tmp, err := os.CreateTemp(filepath.Dir(destination), ".replay-*.bz2.part")
+	tmp, err := os.CreateTemp(filepath.Dir(destination), ".replay-*.download.part")
 	if err != nil {
 		return fmt.Errorf("create replay temp file: %w", err)
 	}
@@ -136,12 +148,43 @@ func (d *Downloader) download(ctx context.Context, rawURL, destination string) e
 	return nil
 }
 
-func decompressBzip2(source, destination string) error {
+func decompressReplay(source, destination string) error {
 	in, err := os.Open(source)
 	if err != nil {
-		return fmt.Errorf("open compressed replay: %w", err)
+		return fmt.Errorf("open downloaded replay: %w", err)
 	}
 	defer in.Close()
+
+	header := make([]byte, len(rawDEMMagic))
+	n, err := io.ReadFull(in, header)
+	if err != nil {
+		return fmt.Errorf("read replay header: %w", err)
+	}
+	header = header[:n]
+	if _, err := in.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("rewind replay: %w", err)
+	}
+
+	var reader io.Reader
+	var closeReader func()
+	switch {
+	case bytes.HasPrefix(header, rawDEMMagic):
+		reader = in
+	case len(header) >= 4 && header[0] == 'B' && header[1] == 'Z' && header[2] == 'h' && header[3] >= '1' && header[3] <= '9':
+		reader = bzip2.NewReader(in)
+	case bytes.HasPrefix(header, zstdMagic):
+		decoder, err := zstd.NewReader(in)
+		if err != nil {
+			return fmt.Errorf("open zstd replay: %w", err)
+		}
+		reader = decoder
+		closeReader = decoder.Close
+	default:
+		return fmt.Errorf("unknown replay compression/header: % X", header)
+	}
+	if closeReader != nil {
+		defer closeReader()
+	}
 
 	tmp, err := os.CreateTemp(filepath.Dir(destination), ".replay-*.dem.part")
 	if err != nil {
@@ -156,7 +199,7 @@ func decompressBzip2(source, destination string) error {
 		}
 	}()
 
-	if _, err := io.Copy(tmp, bzip2.NewReader(in)); err != nil {
+	if _, err := io.Copy(tmp, reader); err != nil {
 		return fmt.Errorf("decompress replay: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
@@ -165,6 +208,24 @@ func decompressBzip2(source, destination string) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close decompressed replay: %w", err)
 	}
+
+	// A successful decompression is not enough: the payload must actually be
+	// a Source 2 Dota demo. This catches HTML/error payloads that happened to
+	// arrive with HTTP 200 and protects Manta from confusing downstream errors.
+	out, err := os.Open(tmpName)
+	if err != nil {
+		return fmt.Errorf("verify decompressed replay: %w", err)
+	}
+	magic := make([]byte, len(rawDEMMagic))
+	_, readErr := io.ReadFull(out, magic)
+	_ = out.Close()
+	if readErr != nil {
+		return fmt.Errorf("verify decompressed replay header: %w", readErr)
+	}
+	if !bytes.Equal(magic, rawDEMMagic) {
+		return fmt.Errorf("decompressed payload is not a Source 2 replay: header % X", magic)
+	}
+
 	if err := os.Rename(tmpName, destination); err != nil {
 		return fmt.Errorf("commit decompressed replay: %w", err)
 	}
