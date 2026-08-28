@@ -33,6 +33,28 @@ func TestConsolidateFightWindowsMergesConvergedClusters(t *testing.T) {
 	}
 }
 
+func TestConsolidateFightWindowsMergesSubThreeSecondReplayTickOverlap(t *testing.T) {
+	in := []FightWindow{
+		{
+			StartT: 628.1000, EndT: 661.2000,
+			CenterX: 100, CenterY: 100,
+			Participants: []int{0, 1, 128, 129},
+			Deaths: 1, HeroDamage: 3200,
+		},
+		{
+			StartT: 658.2333, EndT: 681.3000,
+			CenterX: 109, CenterY: 106,
+			Participants: []int{0, 1, 128, 129},
+			Deaths: 1, HeroDamage: 2800,
+		},
+	}
+
+	got := ConsolidateFightWindows(in)
+	if len(got) != 1 {
+		t.Fatalf("near-3s replay-tick overlap was not merged: %#v", got)
+	}
+}
+
 func TestConsolidateFightWindowsKeepsSeparateMapAreas(t *testing.T) {
 	in := []FightWindow{
 		{
