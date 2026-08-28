@@ -1,0 +1,14 @@
+# runtime state and replays
+data/
+
+# local config may contain an OpenDota API key
+config.json
+
+# build output
+git-gud
+*.out
+
+# editor / OS
+.vscode/
+.idea/
+.DS_Store
