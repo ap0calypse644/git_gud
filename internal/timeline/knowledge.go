@@ -1,21 +1,25 @@
 package timeline
 
-import "sort"
+import (
+	"math"
+	"sort"
+)
 
 const (
 	worldUnitsPerTimelineCoord = 128.0
 	estimatedVisibilityMaxGap  = 2.5
+	heroSourceTimeTolerance    = 1.25
 )
 
 // DeriveKnowledge builds conservative, explicitly estimated team-information
-// inputs. Exact replay hero positions are used only to test whether a sample
-// falls inside a replay-observed observer ward's nominal radius. Terrain,
-// trees, temporary day/night effects, invisibility and other FoW mechanics are
-// not reconstructed here, so these intervals must never be treated as direct
-// visibility proof.
+// inputs. Exact replay hero positions are used only to test whether an enemy
+// sample falls inside a replay-observed friendly source's nominal vision
+// radius. Terrain, trees, temporary darkness, invisibility and other FoW
+// mechanics are not reconstructed here, so these intervals must never be
+// treated as direct visibility proof.
 func DeriveKnowledge(tl *MatchTimeline) KnowledgeTimeline {
 	out := KnowledgeTimeline{
-		Method: "observer_ward_radius_only",
+		Method: "observer_ward_and_allied_hero_conservative_radius",
 	}
 
 	target := tl.Players[slotKey(tl.TargetPlayerSlot)]
@@ -24,13 +28,14 @@ func DeriveKnowledge(tl *MatchTimeline) KnowledgeTimeline {
 		return out
 	}
 	out.Team = target.Team
+	heroIndex := indexHeroVisionSources(target.Team, tl.VisionSources.Heroes)
 
 	for _, player := range tl.Players {
 		if player == nil || player.Team == target.Team {
 			continue
 		}
 		out.EstimatedVisibility = append(out.EstimatedVisibility,
-			deriveEstimatedWardVisibilityForPlayer(player, target.Team, tl.VisionSources.Wards)...)
+			deriveEstimatedVisibilityForPlayer(player, target.Team, tl.VisionSources.Wards, heroIndex)...)
 	}
 
 	sort.Slice(out.EstimatedVisibility, func(i, j int) bool {
@@ -45,7 +50,7 @@ func DeriveKnowledge(tl *MatchTimeline) KnowledgeTimeline {
 	return out
 }
 
-func deriveEstimatedWardVisibilityForPlayer(player *PlayerTimeline, viewerTeam int, wards []WardInterval) []EstimatedVisibilityInterval {
+func deriveEstimatedVisibilityForPlayer(player *PlayerTimeline, viewerTeam int, wards []WardInterval, heroIndex map[int][]HeroVisionSample) []EstimatedVisibilityInterval {
 	var out []EstimatedVisibilityInterval
 	var current *EstimatedVisibilityInterval
 
@@ -54,6 +59,7 @@ func deriveEstimatedWardVisibilityForPlayer(player *PlayerTimeline, viewerTeam i
 			return
 		}
 		current.SourceWards = uniqueWardRefs(current.SourceWards)
+		current.SourceHeroSlots = uniqueInts(current.SourceHeroSlots)
 		out = append(out, *current)
 		current = nil
 	}
@@ -64,8 +70,9 @@ func deriveEstimatedWardVisibilityForPlayer(player *PlayerTimeline, viewerTeam i
 			continue
 		}
 
-		sources := observerWardsCoveringSample(sample, viewerTeam, wards)
-		if len(sources) == 0 {
+		wardSources := observerWardsCoveringSample(sample, viewerTeam, wards)
+		heroSources := alliedHeroesCoveringSample(sample, viewerTeam, heroIndex)
+		if len(wardSources) == 0 && len(heroSources) == 0 {
 			flush()
 			continue
 		}
@@ -73,15 +80,16 @@ func deriveEstimatedWardVisibilityForPlayer(player *PlayerTimeline, viewerTeam i
 		if current == nil || sample.T-current.EndT > estimatedVisibilityMaxGap {
 			flush()
 			current = &EstimatedVisibilityInterval{
-				PlayerSlot:  player.PlayerSlot,
-				StartT:      sample.T,
-				EndT:        sample.T,
-				StartX:      sample.X,
-				StartY:      sample.Y,
-				EndX:        sample.X,
-				EndY:        sample.Y,
-				SampleCount: 1,
-				SourceWards: append([]VisionSourceRef(nil), sources...),
+				PlayerSlot:      player.PlayerSlot,
+				StartT:          sample.T,
+				EndT:            sample.T,
+				StartX:          sample.X,
+				StartY:          sample.Y,
+				EndX:            sample.X,
+				EndY:            sample.Y,
+				SampleCount:     1,
+				SourceWards:     append([]VisionSourceRef(nil), wardSources...),
+				SourceHeroSlots: append([]int(nil), heroSources...),
 			}
 			continue
 		}
@@ -90,10 +98,17 @@ func deriveEstimatedWardVisibilityForPlayer(player *PlayerTimeline, viewerTeam i
 		current.EndX = sample.X
 		current.EndY = sample.Y
 		current.SampleCount++
-		current.SourceWards = append(current.SourceWards, sources...)
+		current.SourceWards = append(current.SourceWards, wardSources...)
+		current.SourceHeroSlots = append(current.SourceHeroSlots, heroSources...)
 	}
 	flush()
 	return out
+}
+
+// Retained as a focused helper for tests and auditing of the previously
+// validated ward-only behavior.
+func deriveEstimatedWardVisibilityForPlayer(player *PlayerTimeline, viewerTeam int, wards []WardInterval) []EstimatedVisibilityInterval {
+	return deriveEstimatedVisibilityForPlayer(player, viewerTeam, wards, nil)
 }
 
 func observerWardsCoveringSample(sample HeroSample, viewerTeam int, wards []WardInterval) []VisionSourceRef {
@@ -105,7 +120,7 @@ func observerWardsCoveringSample(sample HeroSample, viewerTeam int, wards []Ward
 		if sample.T < ward.StartT || sample.T > ward.EndT {
 			continue
 		}
-		rangeWorld := conservativeWardVisionRange(ward)
+		rangeWorld := conservativeVisionRange(ward.DayVisionRange, ward.NightVisionRange)
 		if rangeWorld <= 0 {
 			continue
 		}
@@ -120,12 +135,51 @@ func observerWardsCoveringSample(sample HeroSample, viewerTeam int, wards []Ward
 	return refs
 }
 
-// If a replay ever reports different day/night ranges, use the smaller
-// positive radius instead of pretending we know temporary day/night state.
-// Current observer wards in the validated replay expose 1600/1600.
-func conservativeWardVisionRange(ward WardInterval) float64 {
-	day := ward.DayVisionRange
-	night := ward.NightVisionRange
+func indexHeroVisionSources(viewerTeam int, sources []HeroVisionSample) map[int][]HeroVisionSample {
+	out := make(map[int][]HeroVisionSample)
+	for _, source := range sources {
+		if source.Team != viewerTeam || !source.Alive {
+			continue
+		}
+		if conservativeVisionRange(source.DayVisionRange, source.NightVisionRange) <= 0 {
+			continue
+		}
+		sec := int(math.Floor(source.T))
+		out[sec] = append(out[sec], source)
+	}
+	return out
+}
+
+func alliedHeroesCoveringSample(sample HeroSample, viewerTeam int, index map[int][]HeroVisionSample) []int {
+	if len(index) == 0 {
+		return nil
+	}
+	sec := int(math.Floor(sample.T))
+	var slots []int
+	for bucket := sec - 1; bucket <= sec+1; bucket++ {
+		for _, source := range index[bucket] {
+			if source.Team != viewerTeam || !source.Alive || math.Abs(source.T-sample.T) > heroSourceTimeTolerance {
+				continue
+			}
+			rangeWorld := conservativeVisionRange(source.DayVisionRange, source.NightVisionRange)
+			if rangeWorld <= 0 {
+				continue
+			}
+			radius := rangeWorld / worldUnitsPerTimelineCoord
+			dx := sample.X - source.X
+			dy := sample.Y - source.Y
+			if dx*dx+dy*dy <= radius*radius {
+				slots = append(slots, source.PlayerSlot)
+			}
+		}
+	}
+	return uniqueInts(slots)
+}
+
+// If replay-provided day/night ranges differ, use the smaller positive radius.
+// This deliberately underclaims ordinary daytime vision rather than pretending
+// we have reconstructed temporary darkness and every patch-specific modifier.
+func conservativeVisionRange(day, night float64) float64 {
 	switch {
 	case day > 0 && night > 0 && day < night:
 		return day
@@ -136,6 +190,10 @@ func conservativeWardVisionRange(ward WardInterval) float64 {
 	default:
 		return night
 	}
+}
+
+func conservativeWardVisionRange(ward WardInterval) float64 {
+	return conservativeVisionRange(ward.DayVisionRange, ward.NightVisionRange)
 }
 
 func uniqueWardRefs(in []VisionSourceRef) []VisionSourceRef {
@@ -154,5 +212,19 @@ func uniqueWardRefs(in []VisionSourceRef) []VisionSourceRef {
 		}
 		return out[i].EntityIndex < out[j].EntityIndex
 	})
+	return out
+}
+
+func uniqueInts(in []int) []int {
+	seen := make(map[int]struct{}, len(in))
+	out := make([]int, 0, len(in))
+	for _, v := range in {
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	sort.Ints(out)
 	return out
 }

@@ -73,7 +73,8 @@ type VisibilityEvent struct {
 // VisionSourceTimeline contains replay-observed vision sources. These are raw
 // inputs for later visibility estimates, not proof that an enemy was seen.
 type VisionSourceTimeline struct {
-	Wards []WardInterval `json:"wards"`
+	Wards  []WardInterval     `json:"wards"`
+	Heroes []HeroVisionSample `json:"heroes"`
 }
 
 // WardInterval is one observer/sentry ward's active lifetime reconstructed
@@ -97,9 +98,23 @@ type WardInterval struct {
 	FOWTeam          int     `json:"fow_team,omitempty"`
 }
 
-// KnowledgeTimeline is deliberately weaker than direct visibility. The current
-// method only asks whether an omniscient replay sample fell inside a friendly
-// observer ward's nominal radius, so its intervals are explicitly estimated.
+// HeroVisionSample is a roughly 1 Hz replay fact for a primary hero acting as
+// a potential team vision source. Illusions and clones are deliberately
+// excluded for this first conservative source model.
+type HeroVisionSample struct {
+	T                float64 `json:"t"`
+	PlayerSlot       int     `json:"player_slot"`
+	Team             int     `json:"team"`
+	X                float64 `json:"x"`
+	Y                float64 `json:"y"`
+	Alive            bool    `json:"alive"`
+	DayVisionRange   float64 `json:"day_vision_range,omitempty"`
+	NightVisionRange float64 `json:"night_vision_range,omitempty"`
+}
+
+// KnowledgeTimeline is deliberately weaker than direct visibility. Its
+// intervals are geometry-derived estimates from replay-observed vision sources
+// and must not be promoted into confirmed player knowledge.
 type KnowledgeTimeline struct {
 	Team                int                           `json:"team"`
 	Method              string                        `json:"method"`
@@ -107,19 +122,20 @@ type KnowledgeTimeline struct {
 }
 
 // EstimatedVisibilityInterval is a contiguous run of enemy replay samples that
-// fall inside at least one friendly observer ward's nominal vision radius.
-// It is useful evidence for later coaching, but terrain, trees, invisibility,
-// temporary darkness and other FoW mechanics can invalidate the estimate.
+// fall inside at least one friendly source's conservative nominal vision
+// radius. Terrain, trees, invisibility, temporary darkness and other FoW
+// mechanics can invalidate the estimate.
 type EstimatedVisibilityInterval struct {
-	PlayerSlot  int               `json:"player_slot"`
-	StartT      float64           `json:"start_t"`
-	EndT        float64           `json:"end_t"`
-	StartX      float64           `json:"start_x"`
-	StartY      float64           `json:"start_y"`
-	EndX        float64           `json:"end_x"`
-	EndY        float64           `json:"end_y"`
-	SampleCount int               `json:"sample_count"`
-	SourceWards []VisionSourceRef `json:"source_wards"`
+	PlayerSlot      int               `json:"player_slot"`
+	StartT          float64           `json:"start_t"`
+	EndT            float64           `json:"end_t"`
+	StartX          float64           `json:"start_x"`
+	StartY          float64           `json:"start_y"`
+	EndX            float64           `json:"end_x"`
+	EndY            float64           `json:"end_y"`
+	SampleCount     int               `json:"sample_count"`
+	SourceWards     []VisionSourceRef `json:"source_wards,omitempty"`
+	SourceHeroSlots []int             `json:"source_hero_slots,omitempty"`
 }
 
 type VisionSourceRef struct {

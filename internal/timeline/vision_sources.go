@@ -1,7 +1,9 @@
 package timeline
 
 import (
+	"math"
 	"sort"
+	"strings"
 
 	"github.com/dotabuff/manta"
 )
@@ -27,16 +29,30 @@ type rawWardInterval struct {
 	closed           bool
 }
 
+type rawHeroVisionSample struct {
+	absoluteT       float64
+	playerSlot      int
+	team            int
+	x               float64
+	y               float64
+	alive           bool
+	dayVisionRange  float64
+	nightVisionRange float64
+}
+
 type wardCollector struct {
-	active    map[wardEntityKey]int
-	lastState map[wardEntityKey]int
-	intervals []rawWardInterval
+	active               map[wardEntityKey]int
+	lastState            map[wardEntityKey]int
+	intervals            []rawWardInterval
+	heroSamples          []rawHeroVisionSample
+	lastHeroSampleSecond map[int]int
 }
 
 func newWardCollector() *wardCollector {
 	return &wardCollector{
-		active:    make(map[wardEntityKey]int),
-		lastState: make(map[wardEntityKey]int),
+		active:               make(map[wardEntityKey]int),
+		lastState:            make(map[wardEntityKey]int),
+		lastHeroSampleSecond: make(map[int]int),
 	}
 }
 
@@ -51,10 +67,14 @@ func wardKind(className string) (string, bool) {
 	}
 }
 
-// observe records ward lifecycle from replay entity state. It intentionally
-// keeps raw replay facts only: a life-state transition tells us when a ward
-// stopped being active, but not whether it was killed or naturally expired.
+// observe records replay-observed vision-source facts. Ward lifecycle is kept
+// exact at entity-update granularity. Primary hero vision sources are sampled at
+// roughly 1 Hz and intentionally exclude illusions/clones for this first model.
 func (c *wardCollector) observe(e *manta.Entity, op manta.EntityOp, absoluteTime float64) {
+	if strings.HasPrefix(e.GetClassName(), "CDOTA_Unit_Hero_") {
+		c.observeHeroVision(e, op, absoluteTime)
+	}
+
 	kind, ok := wardKind(e.GetClassName())
 	if !ok {
 		return
@@ -87,6 +107,66 @@ func (c *wardCollector) observe(e *manta.Entity, op manta.EntityOp, absoluteTime
 	if seen && oldState == 0 {
 		c.close(key, absoluteTime, "life_state_ended")
 	}
+}
+
+func (c *wardCollector) observeHeroVision(e *manta.Entity, op manta.EntityOp, absoluteTime float64) {
+	if !op.Flag(manta.EntityOpUpdated) && !op.Flag(manta.EntityOpCreated) {
+		return
+	}
+	if illusion, ok := e.GetBool("m_bIsIllusion"); ok && illusion {
+		return
+	}
+	if clone, ok := e.GetBool("m_bIsClone"); ok && clone {
+		return
+	}
+
+	rawPlayerID, ok := numberInt(e.Get("m_iPlayerID"))
+	if !ok {
+		return
+	}
+	team, ok := numberInt(e.Get("m_iTeamNum"))
+	if !ok {
+		return
+	}
+	slot, ok := heroPlayerSlot(rawPlayerID, team)
+	if !ok {
+		return
+	}
+
+	second := int(math.Floor(absoluteTime))
+	if last, seen := c.lastHeroSampleSecond[slot]; seen && last == second {
+		return
+	}
+
+	x, xOK := cellPosition(e, "CBodyComponent.m_cellX", "CBodyComponent.m_vecX")
+	y, yOK := cellPosition(e, "CBodyComponent.m_cellY", "CBodyComponent.m_vecY")
+	if !xOK || !yOK {
+		return
+	}
+	dayVision, _ := numberFloat(e.Get("m_iDayTimeVisionRange"))
+	nightVision, _ := numberFloat(e.Get("m_iNightTimeVisionRange"))
+	if dayVision <= 0 && nightVision <= 0 {
+		return
+	}
+
+	alive := true
+	if lifeState, ok := numberInt(e.Get("m_lifeState")); ok {
+		alive = lifeState == 0
+	} else if hp, ok := numberInt(e.Get("m_iHealth")); ok {
+		alive = hp > 0
+	}
+
+	c.heroSamples = append(c.heroSamples, rawHeroVisionSample{
+		absoluteT:        absoluteTime,
+		playerSlot:       slot,
+		team:             team,
+		x:                x,
+		y:                y,
+		alive:            alive,
+		dayVisionRange:   dayVision,
+		nightVisionRange: nightVision,
+	})
+	c.lastHeroSampleSecond[slot] = second
 }
 
 func (c *wardCollector) open(e *manta.Entity, key wardEntityKey, kind string, absoluteTime float64) {
@@ -193,5 +273,29 @@ func (c *wardCollector) apply(out *MatchTimeline, gameStartAbs, duration float64
 			return out.VisionSources.Wards[i].EntityIndex < out.VisionSources.Wards[j].EntityIndex
 		}
 		return out.VisionSources.Wards[i].StartT < out.VisionSources.Wards[j].StartT
+	})
+
+	out.VisionSources.Heroes = make([]HeroVisionSample, 0, len(c.heroSamples))
+	for _, raw := range c.heroSamples {
+		t := raw.absoluteT - gameStartAbs
+		if t < 0 || t > duration {
+			continue
+		}
+		out.VisionSources.Heroes = append(out.VisionSources.Heroes, HeroVisionSample{
+			T:                t,
+			PlayerSlot:       raw.playerSlot,
+			Team:             raw.team,
+			X:                raw.x,
+			Y:                raw.y,
+			Alive:            raw.alive,
+			DayVisionRange:   raw.dayVisionRange,
+			NightVisionRange: raw.nightVisionRange,
+		})
+	}
+	sort.Slice(out.VisionSources.Heroes, func(i, j int) bool {
+		if out.VisionSources.Heroes[i].T == out.VisionSources.Heroes[j].T {
+			return out.VisionSources.Heroes[i].PlayerSlot < out.VisionSources.Heroes[j].PlayerSlot
+		}
+		return out.VisionSources.Heroes[i].T < out.VisionSources.Heroes[j].T
 	})
 }

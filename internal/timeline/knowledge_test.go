@@ -38,7 +38,7 @@ func TestDeriveKnowledgeUsesFriendlyObserverWardRadius(t *testing.T) {
 	}
 
 	got := DeriveKnowledge(&tl)
-	if got.Team != dotaTeamRadiant || got.Method != "observer_ward_radius_only" {
+	if got.Team != dotaTeamRadiant || got.Method != "observer_ward_and_allied_hero_conservative_radius" {
 		t.Fatalf("unexpected knowledge header: %#v", got)
 	}
 	if len(got.EstimatedVisibility) != 1 {
@@ -123,5 +123,48 @@ func TestDeriveKnowledgeSplitsLongSampleGaps(t *testing.T) {
 	got := deriveEstimatedWardVisibilityForPlayer(player, dotaTeamRadiant, []WardInterval{ward})
 	if len(got) != 2 {
 		t.Fatalf("got %d intervals, want 2 for a long observation gap", len(got))
+	}
+}
+
+func TestAlliedHeroVisionUsesFriendlyAlivePrimarySources(t *testing.T) {
+	enemy := &PlayerTimeline{
+		PlayerSlot: 128,
+		Team:       dotaTeamDire,
+		Samples: []HeroSample{
+			{T: 10, X: 105, Y: 100, Alive: true},
+			{T: 11, X: 105, Y: 100, Alive: true},
+		},
+	}
+	sources := []HeroVisionSample{
+		{T: 10.1, PlayerSlot: 0, Team: dotaTeamRadiant, X: 100, Y: 100, Alive: true, DayVisionRange: 1800, NightVisionRange: 800},
+		{T: 11.1, PlayerSlot: 0, Team: dotaTeamRadiant, X: 100, Y: 100, Alive: true, DayVisionRange: 1800, NightVisionRange: 800},
+		{T: 10.1, PlayerSlot: 129, Team: dotaTeamDire, X: 105, Y: 100, Alive: true, DayVisionRange: 1800, NightVisionRange: 800},
+		{T: 10.1, PlayerSlot: 2, Team: dotaTeamRadiant, X: 105, Y: 100, Alive: false, DayVisionRange: 1800, NightVisionRange: 800},
+	}
+
+	idx := indexHeroVisionSources(dotaTeamRadiant, sources)
+	got := deriveEstimatedVisibilityForPlayer(enemy, dotaTeamRadiant, nil, idx)
+	if len(got) != 1 {
+		t.Fatalf("got %d intervals, want 1", len(got))
+	}
+	if len(got[0].SourceHeroSlots) != 1 || got[0].SourceHeroSlots[0] != 0 {
+		t.Fatalf("unexpected hero sources: %#v", got[0].SourceHeroSlots)
+	}
+}
+
+func TestAlliedHeroVisionUsesConservativeNightRange(t *testing.T) {
+	source := HeroVisionSample{
+		T: 10, PlayerSlot: 0, Team: dotaTeamRadiant, X: 100, Y: 100, Alive: true,
+		DayVisionRange: 1800, NightVisionRange: 800,
+	}
+	idx := indexHeroVisionSources(dotaTeamRadiant, []HeroVisionSample{source})
+
+	inside := alliedHeroesCoveringSample(HeroSample{T: 10, X: 106.2, Y: 100, Alive: true}, dotaTeamRadiant, idx)
+	outside := alliedHeroesCoveringSample(HeroSample{T: 10, X: 106.3, Y: 100, Alive: true}, dotaTeamRadiant, idx)
+	if len(inside) != 1 {
+		t.Fatalf("6.2 timeline units should be inside conservative 800-world-unit radius")
+	}
+	if len(outside) != 0 {
+		t.Fatalf("6.3 timeline units should be outside conservative 800-world-unit radius")
 	}
 }
