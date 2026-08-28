@@ -168,3 +168,51 @@ func TestAlliedHeroVisionUsesConservativeNightRange(t *testing.T) {
 		t.Fatalf("6.3 timeline units should be outside conservative 800-world-unit radius")
 	}
 }
+
+func TestEnemyKnowledgeAtVisibleLastSeenAndNeverSeen(t *testing.T) {
+	k := KnowledgeTimeline{EstimatedVisibility: []EstimatedVisibilityInterval{
+		{
+			PlayerSlot: 128,
+			StartT: 10,
+			EndT:   20,
+			EndX:   110,
+			EndY:   120,
+			SourceWards: []VisionSourceRef{{EntityIndex: 7, EntitySerial: 3}},
+			SourceHeroSlots: []int{1, 2},
+		},
+	}}
+
+	visible := EnemyKnowledgeAt(k, 128, 15)
+	if visible.Status != "estimated_visible" || visible.SecondsSinceSeen == nil || *visible.SecondsSinceSeen != 0 {
+		t.Fatalf("unexpected visible state: %#v", visible)
+	}
+	if visible.LastSeenT == nil || *visible.LastSeenT != 20 {
+		t.Fatalf("visible last-seen anchor = %#v, want interval end 20", visible.LastSeenT)
+	}
+
+	missing := EnemyKnowledgeAt(k, 128, 35)
+	if missing.Status != "last_seen" || missing.SecondsSinceSeen == nil || *missing.SecondsSinceSeen != 15 {
+		t.Fatalf("unexpected last-seen state: %#v", missing)
+	}
+	if missing.LastSeenX == nil || *missing.LastSeenX != 110 || missing.LastSeenY == nil || *missing.LastSeenY != 120 {
+		t.Fatalf("unexpected last-seen position: %#v", missing)
+	}
+	if len(missing.SourceWards) != 1 || len(missing.SourceHeroSlots) != 2 {
+		t.Fatalf("last-seen evidence was not retained: %#v", missing)
+	}
+
+	never := EnemyKnowledgeAt(k, 129, 35)
+	if never.Status != "never_seen" || never.LastSeenT != nil || never.SecondsSinceSeen != nil {
+		t.Fatalf("unexpected never-seen state: %#v", never)
+	}
+}
+
+func TestEnemyKnowledgeAtDoesNotUseFutureIntervals(t *testing.T) {
+	k := KnowledgeTimeline{EstimatedVisibility: []EstimatedVisibilityInterval{
+		{PlayerSlot: 128, StartT: 40, EndT: 50, EndX: 200, EndY: 200},
+	}}
+	got := EnemyKnowledgeAt(k, 128, 30)
+	if got.Status != "never_seen" {
+		t.Fatalf("future visibility leaked into state: %#v", got)
+	}
+}
