@@ -14,12 +14,12 @@ type MatchTimeline struct {
 	Abilities           []AbilityEvent              `json:"abilities,omitempty"`
 	Items               []ItemEvent                 `json:"items,omitempty"`
 	Buybacks            []BuybackEvent              `json:"buybacks,omitempty"`
-	Objectives          []ObjectiveEvent            `json:"objectives,omitempty"`
-	Fights              []FightWindow               `json:"fights,omitempty"`
-	Visibility          VisibilityTimeline          `json:"visibility"`
-	VisionSources       VisionSourceTimeline        `json:"vision_sources"`
-	Knowledge           KnowledgeTimeline           `json:"knowledge"`
-	TargetDeathContexts []TargetDeathContext        `json:"target_death_contexts"`
+	Objectives          []ObjectiveEvent             `json:"objectives,omitempty"`
+	Fights              []FightWindow                `json:"fights,omitempty"`
+	Visibility          VisibilityTimeline           `json:"visibility"`
+	VisionSources       VisionSourceTimeline         `json:"vision_sources"`
+	Knowledge           KnowledgeTimeline            `json:"knowledge"`
+	TargetDeathContexts []TargetDeathContext         `json:"target_death_contexts"`
 }
 
 type PlayerTimeline struct {
@@ -199,15 +199,19 @@ type ObjectiveEvent struct {
 }
 
 // FightWindow is derived deterministically from hero-to-hero damage, deaths,
-// and replay positions. It is context, not a coaching judgment. CenterX/Y are
-// the approximate center of the observed combat in Source 2 cell coordinates.
+// and replay positions. It is context, not a coaching judgment. StartT/EndT
+// include the detector's lead/trail padding. ObservedStartT/ObservedEndT retain
+// the first/last raw combat moment so later decision analysis can reason about
+// ordering without reverse-engineering padding.
 type FightWindow struct {
-	StartT         float64 `json:"start_t"`
-	EndT           float64 `json:"end_t"`
-	CenterX        float64 `json:"center_x,omitempty"`
-	CenterY        float64 `json:"center_y,omitempty"`
-	Participants   []int   `json:"participants"`
-	Deaths         int     `json:"deaths"`
-	HeroDamage     int64   `json:"hero_damage"`
-	TargetInvolved bool    `json:"target_involved"`
+	StartT           float64 `json:"start_t"`
+	EndT             float64 `json:"end_t"`
+	ObservedStartT   float64 `json:"observed_start_t"`
+	ObservedEndT     float64 `json:"observed_end_t"`
+	CenterX          float64 `json:"center_x,omitempty"`
+	CenterY          float64 `json:"center_y,omitempty"`
+	Participants     []int   `json:"participants"`
+	Deaths           int     `json:"deaths"`
+	HeroDamage       int64   `json:"hero_damage"`
+	TargetInvolved   bool    `json:"target_involved"`
 }
