@@ -60,6 +60,7 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 
 	events := newEventCollector(p)
 	visibility := newVisibilityCollector()
+	creeps := newCreepCollector()
 
 	combatLogName := func(index uint32) string {
 		name, _ := p.LookupStringByIndex("CombatLogNames", int32(index))
@@ -130,6 +131,17 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 				}
 			}
 			return nil
+		}
+
+		// M12 derives compact same-team creep spatial clusters directly during
+		// replay parsing. The collector ignores every class except the two lane
+		// creep classes validated by M11, so hero and unrelated entity callbacks
+		// are cheap no-ops here.
+		if gameStartSet && !gameEndSet {
+			matchTime := float64(p.NetTick)/tickRate - gameStartTime
+			if matchTime >= 0 {
+				creeps.observe(e, op, matchTime)
+			}
 		}
 
 		if !strings.HasPrefix(className, "CDOTA_Unit_Hero_") {
@@ -270,6 +282,7 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 		}
 	}
 
+	out.CreepClusters = creeps.finalize(out.DurationSeconds)
 	events.apply(&out, gameStartTime)
 	out.Fights = DeriveFightWindows(&out)
 
