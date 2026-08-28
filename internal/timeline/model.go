@@ -17,6 +17,7 @@ type MatchTimeline struct {
 	Objectives       []ObjectiveEvent            `json:"objectives,omitempty"`
 	Fights           []FightWindow               `json:"fights,omitempty"`
 	Visibility       VisibilityTimeline          `json:"visibility"`
+	VisionSources    VisionSourceTimeline        `json:"vision_sources"`
 }
 
 type PlayerTimeline struct {
@@ -66,6 +67,33 @@ type VisibilityEvent struct {
 	VisibleByTeamMask int     `json:"visible_by_team_mask"`
 	VisibleToRadiant  bool    `json:"visible_to_radiant"`
 	VisibleToDire     bool    `json:"visible_to_dire"`
+}
+
+// VisionSourceTimeline contains replay-observed vision sources. These are raw
+// inputs for later visibility estimates, not proof that an enemy was seen.
+type VisionSourceTimeline struct {
+	Wards []WardInterval `json:"wards"`
+}
+
+// WardInterval is one observer/sentry ward's active lifetime reconstructed
+// from its replay entity. Vision ranges are the raw Source 2 world-unit values
+// transmitted by the entity; X/Y use the timeline's cell-coordinate scale.
+// EndReason is intentionally conservative: a life-state transition does not by
+// itself tell us whether the ward was killed or naturally expired.
+type WardInterval struct {
+	EntityIndex      int32   `json:"entity_index"`
+	EntitySerial     int32   `json:"entity_serial"`
+	Kind             string  `json:"kind"` // observer | sentry
+	Team             int     `json:"team"`
+	OwnerRawPlayerID *int    `json:"owner_raw_player_id,omitempty"`
+	X                float64 `json:"x"`
+	Y                float64 `json:"y"`
+	StartT           float64 `json:"start_t"`
+	EndT             float64 `json:"end_t"`
+	EndReason        string  `json:"end_reason"`
+	DayVisionRange   float64 `json:"day_vision_range,omitempty"`
+	NightVisionRange float64 `json:"night_vision_range,omitempty"`
+	FOWTeam          int     `json:"fow_team,omitempty"`
 }
 
 type DeathEvent struct {
