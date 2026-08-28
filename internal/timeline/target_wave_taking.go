@@ -23,19 +23,19 @@ const (
 // taking a wave, not proof that the player personally last-hit or damaged any
 // creep. Later danger/overstay detectors may consume these periods as context.
 type TargetWaveTakingTimeline struct {
-	Available                   bool                     `json:"available"`
-	Method                      string                   `json:"method"`
-	ProximityRadiusWorld        float64                  `json:"proximity_radius_world"`
-	SampleMaxAgeSeconds         float64                  `json:"sample_max_age_seconds"`
-	MinContactSamples           int                      `json:"min_contact_samples"`
-	MinObservedCreepLoss        int                      `json:"min_observed_creep_loss"`
-	DepletionContextSamples     int                      `json:"depletion_context_samples"`
-	ExposurePeriodsObserved     int                      `json:"exposure_periods_observed"`
-	RejectedTooShort            int                      `json:"rejected_too_short"`
-	RejectedNoDepletion         int                      `json:"rejected_no_depletion"`
-	LeadingContactSamplesTrimmed  int                    `json:"leading_contact_samples_trimmed"`
-	TrailingContactSamplesTrimmed int                    `json:"trailing_contact_samples_trimmed"`
-	Periods                     []TargetWaveTakingPeriod `json:"periods"`
+	Available                     bool                     `json:"available"`
+	Method                        string                   `json:"method"`
+	ProximityRadiusWorld          float64                  `json:"proximity_radius_world"`
+	SampleMaxAgeSeconds           float64                  `json:"sample_max_age_seconds"`
+	MinContactSamples             int                      `json:"min_contact_samples"`
+	MinObservedCreepLoss          int                      `json:"min_observed_creep_loss"`
+	DepletionContextSamples       int                      `json:"depletion_context_samples"`
+	ExposurePeriodsObserved       int                      `json:"exposure_periods_observed"`
+	RejectedTooShort              int                      `json:"rejected_too_short"`
+	RejectedNoDepletion           int                      `json:"rejected_no_depletion"`
+	LeadingContactSamplesTrimmed  int                      `json:"leading_contact_samples_trimmed"`
+	TrailingContactSamplesTrimmed int                      `json:"trailing_contact_samples_trimmed"`
+	Periods                       []TargetWaveTakingPeriod `json:"periods"`
 }
 
 // TargetWaveTakingPeriod summarizes the depletion-supported portion of one
@@ -45,26 +45,26 @@ type TargetWaveTakingTimeline struct {
 // decrease so a surviving straggler cannot keep a wave-taking period open for
 // tens of seconds after depletion stopped.
 type TargetWaveTakingPeriod struct {
-	WaveID                    string  `json:"wave_id"`
-	Lane                      string  `json:"lane"`
-	EnemyTeam                 int     `json:"enemy_team"`
-	SpawnT                    float64 `json:"spawn_t"`
-	StartT                    float64 `json:"start_t"`
-	EndT                      float64 `json:"end_t"`
-	DurationSeconds           float64 `json:"duration_seconds"`
-	ContactSamples            int     `json:"contact_samples"`
-	ExposureStartT            float64 `json:"exposure_start_t"`
-	ExposureEndT              float64 `json:"exposure_end_t"`
-	ExposureContactSamples    int     `json:"exposure_contact_samples"`
-	FirstDepletionT           float64 `json:"first_depletion_t"`
-	LastDepletionT            float64 `json:"last_depletion_t"`
+	WaveID                 string  `json:"wave_id"`
+	Lane                   string  `json:"lane"`
+	EnemyTeam              int     `json:"enemy_team"`
+	SpawnT                 float64 `json:"spawn_t"`
+	StartT                 float64 `json:"start_t"`
+	EndT                   float64 `json:"end_t"`
+	DurationSeconds        float64 `json:"duration_seconds"`
+	ContactSamples         int     `json:"contact_samples"`
+	ExposureStartT         float64 `json:"exposure_start_t"`
+	ExposureEndT           float64 `json:"exposure_end_t"`
+	ExposureContactSamples int     `json:"exposure_contact_samples"`
+	FirstDepletionT        float64 `json:"first_depletion_t"`
+	LastDepletionT         float64 `json:"last_depletion_t"`
 
-	StartCreepCount           int `json:"start_creep_count"`
-	EndCreepCount             int `json:"end_creep_count"`
-	MinCreepCount             int `json:"min_creep_count"`
-	MaxCreepCount             int `json:"max_creep_count"`
-	ObservedCreepLoss         int `json:"observed_creep_loss"`
-	NetCreepCountChange       int `json:"net_creep_count_change"`
+	StartCreepCount     int `json:"start_creep_count"`
+	EndCreepCount       int `json:"end_creep_count"`
+	MinCreepCount       int `json:"min_creep_count"`
+	MaxCreepCount       int `json:"max_creep_count"`
+	ObservedCreepLoss   int `json:"observed_creep_loss"`
+	NetCreepCountChange int `json:"net_creep_count_change"`
 
 	ClosestT                  float64 `json:"closest_t"`
 	MinDistanceWorld          float64 `json:"min_distance_world"`
@@ -72,14 +72,14 @@ type TargetWaveTakingPeriod struct {
 	MaxDistanceWorld          float64 `json:"max_distance_world"`
 	MaxTargetSampleAgeSeconds float64 `json:"max_target_sample_age_seconds"`
 
-	StartTargetX              float64 `json:"start_target_x"`
-	StartTargetY              float64 `json:"start_target_y"`
-	EndTargetX                float64 `json:"end_target_x"`
-	EndTargetY                float64 `json:"end_target_y"`
-	StartWaveX                float64 `json:"start_wave_x"`
-	StartWaveY                float64 `json:"start_wave_y"`
-	EndWaveX                  float64 `json:"end_wave_x"`
-	EndWaveY                  float64 `json:"end_wave_y"`
+	StartTargetX float64 `json:"start_target_x"`
+	StartTargetY float64 `json:"start_target_y"`
+	EndTargetX   float64 `json:"end_target_x"`
+	EndTargetY   float64 `json:"end_target_y"`
+	StartWaveX   float64 `json:"start_wave_x"`
+	StartWaveY   float64 `json:"start_wave_y"`
+	EndWaveX     float64 `json:"end_wave_x"`
+	EndWaveY     float64 `json:"end_wave_y"`
 }
 
 type targetWaveContact struct {
@@ -267,29 +267,29 @@ func summarizeTargetWaveTakingPeriod(wave LaneWave, contacts []targetWaveContact
 	first := contacts[0]
 	last := contacts[len(contacts)-1]
 	period := TargetWaveTakingPeriod{
-		WaveID:          wave.ID,
-		Lane:            wave.Lane,
-		EnemyTeam:       wave.Team,
-		SpawnT:          wave.SpawnT,
-		StartT:          first.t,
-		EndT:            last.t,
-		DurationSeconds: last.t - first.t,
-		ContactSamples:  len(contacts),
-		StartCreepCount: first.creepCount,
-		EndCreepCount:   last.creepCount,
-		MinCreepCount:   first.creepCount,
-		MaxCreepCount:   first.creepCount,
-		ClosestT:        first.t,
+		WaveID:           wave.ID,
+		Lane:             wave.Lane,
+		EnemyTeam:        wave.Team,
+		SpawnT:           wave.SpawnT,
+		StartT:           first.t,
+		EndT:             last.t,
+		DurationSeconds:  last.t - first.t,
+		ContactSamples:   len(contacts),
+		StartCreepCount:  first.creepCount,
+		EndCreepCount:    last.creepCount,
+		MinCreepCount:    first.creepCount,
+		MaxCreepCount:    first.creepCount,
+		ClosestT:         first.t,
 		MinDistanceWorld: first.distanceWorld,
 		MaxDistanceWorld: first.distanceWorld,
-		StartTargetX:    first.targetX,
-		StartTargetY:    first.targetY,
-		EndTargetX:      last.targetX,
-		EndTargetY:      last.targetY,
-		StartWaveX:      first.waveX,
-		StartWaveY:      first.waveY,
-		EndWaveX:        last.waveX,
-		EndWaveY:        last.waveY,
+		StartTargetX:     first.targetX,
+		StartTargetY:     first.targetY,
+		EndTargetX:       last.targetX,
+		EndTargetY:       last.targetY,
+		StartWaveX:       first.waveX,
+		StartWaveY:       first.waveY,
+		EndWaveX:         last.waveX,
+		EndWaveY:         last.waveY,
 	}
 
 	var distanceSum float64
