@@ -16,6 +16,7 @@ type MatchTimeline struct {
 	Buybacks         []BuybackEvent              `json:"buybacks,omitempty"`
 	Objectives       []ObjectiveEvent            `json:"objectives,omitempty"`
 	Fights           []FightWindow               `json:"fights,omitempty"`
+	Visibility       VisibilityTimeline          `json:"visibility"`
 }
 
 type PlayerTimeline struct {
@@ -40,6 +41,31 @@ type HeroSample struct {
 	MaxMana float32 `json:"max_mana"`
 	Level   int32   `json:"level"`
 	Alive   bool    `json:"alive"`
+}
+
+// VisibilityTimeline stores only replay facts. DirectTeamMaskAvailable says
+// whether this replay build actually transmitted m_iTaggedAsVisibleByTeam on
+// hero entities. Some modern replay builds omit that field even though it
+// exists in the live game schema, so absence is explicit rather than silently
+// interpreted as "not visible".
+type VisibilityTimeline struct {
+	DirectTeamMaskAvailable bool              `json:"direct_team_mask_available"`
+	Events                  []VisibilityEvent `json:"events"`
+}
+
+// VisibilityEvent is emitted when a hero's replay-provided team-visibility
+// mask changes. Dota team IDs are also the mask bit numbers: bit 2 is Radiant
+// and bit 3 is Dire. The booleans are derived from the raw mask for convenient
+// validation; the raw value is retained so later patches can be audited.
+type VisibilityEvent struct {
+	T                 float64 `json:"t"`
+	PlayerSlot        int     `json:"player_slot"`
+	Team              int     `json:"team"`
+	X                 float64 `json:"x,omitempty"`
+	Y                 float64 `json:"y,omitempty"`
+	VisibleByTeamMask int     `json:"visible_by_team_mask"`
+	VisibleToRadiant  bool    `json:"visible_to_radiant"`
+	VisibleToDire     bool    `json:"visible_to_dire"`
 }
 
 type DeathEvent struct {

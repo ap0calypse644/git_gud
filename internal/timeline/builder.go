@@ -41,5 +41,8 @@ func (b *Builder) Build(_ context.Context, match opendota.Match, replayPath stri
 		return "", err
 	}
 	parsed.Fights = ConsolidateFightWindows(parsed.Fights)
+	if parsed.Visibility.Events == nil {
+		parsed.Visibility.Events = []VisibilityEvent{}
+	}
 	return WriteJSON(b.storageRoot, parsed)
 }
