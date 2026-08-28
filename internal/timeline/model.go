@@ -20,6 +20,7 @@ type MatchTimeline struct {
 	VisionSources       VisionSourceTimeline         `json:"vision_sources"`
 	Knowledge           KnowledgeTimeline            `json:"knowledge"`
 	TargetDeathContexts []TargetDeathContext         `json:"target_death_contexts"`
+	TargetFightContexts []TargetFightContext         `json:"target_fight_contexts"`
 }
 
 type PlayerTimeline struct {
