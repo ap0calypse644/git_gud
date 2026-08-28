@@ -1,17 +1,17 @@
 package opendota
 
 type RecentMatch struct {
-	MatchID    int64  `json:"match_id"`
-	PlayerSlot int    `json:"player_slot"`
-	HeroID     int    `json:"hero_id"`
-	StartTime  int64  `json:"start_time"`
-	Duration   int    `json:"duration"`
-	GameMode   int    `json:"game_mode"`
-	LobbyType  int    `json:"lobby_type"`
-	RadiantWin bool   `json:"radiant_win"`
-	Kills      int    `json:"kills"`
-	Deaths     int    `json:"deaths"`
-	Assists    int    `json:"assists"`
+	MatchID    int64 `json:"match_id"`
+	PlayerSlot int   `json:"player_slot"`
+	HeroID     int   `json:"hero_id"`
+	StartTime  int64 `json:"start_time"`
+	Duration   int   `json:"duration"`
+	GameMode   int   `json:"game_mode"`
+	LobbyType  int   `json:"lobby_type"`
+	RadiantWin bool  `json:"radiant_win"`
+	Kills      int   `json:"kills"`
+	Deaths     int   `json:"deaths"`
+	Assists    int   `json:"assists"`
 }
 
 type Match struct {
