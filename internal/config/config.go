@@ -47,10 +47,10 @@ type Config struct {
 		BootstrapExisting bool `json:"bootstrap_existing"`
 	} `json:"watcher"`
 	Replays struct {
-		RequestParse   bool     `json:"request_parse"`
-		RetryInterval  Duration `json:"retry_interval"`
-		RetryFor       Duration `json:"retry_for"`
-		KeepCompressed bool     `json:"keep_compressed"`
+		RequestParse    bool     `json:"request_parse"`
+		RetryInterval   Duration `json:"retry_interval"`
+		RetryFor        Duration `json:"retry_for"`
+		KeepCompressed  bool     `json:"keep_compressed"`
 		DownloadTimeout Duration `json:"download_timeout"`
 	} `json:"replays"`
 }
