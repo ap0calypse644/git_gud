@@ -121,6 +121,69 @@ func TestDeriveTargetWaveTakingTrimsLeadingNonDepletionExposure(t *testing.T) {
 	}
 }
 
+// This models the real M14 regression that motivated depletion-bounded output:
+// an older cohort has already stopped losing creeps while a newer same-lane
+// cohort arrives. The old wave's raw proximity may continue, but its primary
+// wave-taking period must not remain open through the whole overlap.
+func TestDeriveTargetWaveTakingOldStragglerDoesNotStayOpenIntoNewWave(t *testing.T) {
+	targetSamples := make([]HeroSample, 0, 8)
+	for second := 1; second <= 8; second++ {
+		targetSamples = append(targetSamples, HeroSample{T: float64(second), X: 100, Y: 100, Alive: true})
+	}
+	tl := MatchTimeline{
+		TargetPlayerSlot: 1,
+		Players: map[string]*PlayerTimeline{
+			"1": {PlayerSlot: 1, Team: 2, Samples: targetSamples},
+		},
+		LaneWaves: LaneWaveTimeline{
+			Available: true,
+			Waves: []LaneWave{
+				{
+					ID: "3:0:bottom", Team: 3, SpawnT: 0, Lane: "bottom",
+					Samples: []LaneWaveSample{
+						{T: 1, CenterX: 101, CenterY: 100, CreepCount: 4},
+						{T: 2, CenterX: 101, CenterY: 100, CreepCount: 3},
+						{T: 3, CenterX: 101, CenterY: 100, CreepCount: 3},
+						{T: 4, CenterX: 101, CenterY: 100, CreepCount: 3},
+						{T: 5, CenterX: 101, CenterY: 100, CreepCount: 3},
+						{T: 6, CenterX: 101, CenterY: 100, CreepCount: 3},
+						{T: 7, CenterX: 101, CenterY: 100, CreepCount: 3},
+						{T: 8, CenterX: 101, CenterY: 100, CreepCount: 3},
+					},
+				},
+				{
+					ID: "3:30:bottom", Team: 3, SpawnT: 30, Lane: "bottom",
+					Samples: []LaneWaveSample{
+						{T: 5, CenterX: 101, CenterY: 100, CreepCount: 4},
+						{T: 6, CenterX: 101, CenterY: 100, CreepCount: 3},
+						{T: 7, CenterX: 101, CenterY: 100, CreepCount: 2},
+						{T: 8, CenterX: 101, CenterY: 100, CreepCount: 2},
+					},
+				},
+			},
+		},
+	}
+
+	got := DeriveTargetWaveTaking(&tl)
+	if len(got.Periods) != 2 {
+		t.Fatalf("periods = %d, want 2: %+v", len(got.Periods), got.Periods)
+	}
+	old := got.Periods[0]
+	newer := got.Periods[1]
+	if old.WaveID != "3:0:bottom" || old.EndT != 3 {
+		t.Fatalf("old straggler period was not trimmed: %+v", old)
+	}
+	if old.ExposureEndT != 8 {
+		t.Fatalf("raw old-wave exposure should remain auditable through t=8: %+v", old)
+	}
+	if newer.WaveID != "3:30:bottom" || newer.StartT != 5 || newer.EndT != 8 {
+		t.Fatalf("unexpected newer wave period: %+v", newer)
+	}
+	if old.EndT >= newer.StartT {
+		t.Fatalf("old primary period overlaps newer wave after depletion: old=%+v newer=%+v", old, newer)
+	}
+}
+
 func TestDeriveTargetWaveTakingRejectsNoDepletion(t *testing.T) {
 	tl := targetWaveTakingTestTimeline([]int{4, 4, 4})
 	got := DeriveTargetWaveTaking(&tl)
