@@ -23,18 +23,23 @@ type Acquirer interface {
 	Acquire(context.Context, opendota.Match) (string, error)
 }
 
+type TimelineBuilder interface {
+	Build(context.Context, opendota.Match, string) (string, error)
+}
+
 type StateStore interface {
 	Load() (storage.State, error)
 	Save(storage.State) error
 }
 
 // Result describes how far a single invocation managed to advance a match.
-// A nil error does not necessarily mean the replay is available yet; callers
-// should inspect Status/ReplayPath.
+// A nil error does not necessarily mean processing is complete; callers should
+// inspect Status and the artifact paths.
 type Result struct {
-	Match      opendota.Match
-	Status     storage.MatchStatus
-	ReplayPath string
+	Match        opendota.Match
+	Status       storage.MatchStatus
+	ReplayPath   string
+	TimelinePath string
 }
 
 // Service owns processing after a match ID is known. Automatic discovery and
@@ -44,12 +49,13 @@ type Service struct {
 	cfg      config.Config
 	api      API
 	acquirer Acquirer
+	timeline TimelineBuilder
 	store    StateStore
 	log      *slog.Logger
 	now      func() time.Time
 }
 
-func New(cfg config.Config, api API, acquirer Acquirer, store StateStore, logger *slog.Logger) *Service {
+func New(cfg config.Config, api API, acquirer Acquirer, timelineBuilder TimelineBuilder, store StateStore, logger *slog.Logger) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -57,16 +63,17 @@ func New(cfg config.Config, api API, acquirer Acquirer, store StateStore, logger
 		cfg:      cfg,
 		api:      api,
 		acquirer: acquirer,
+		timeline: timelineBuilder,
 		store:    store,
 		log:      logger,
 		now:      time.Now,
 	}
 }
 
-// Process advances one match through metadata and replay acquisition.
-// force bypasses retry throttling and is used by explicit -match invocations.
-// It never modifies State.LastSeenMatchID, so historical processing cannot
-// disturb automatic match discovery.
+// Process advances one match through metadata, replay acquisition, and replay
+// timeline generation. force bypasses retry throttling and is used by explicit
+// -match invocations. It never modifies State.LastSeenMatchID, so historical
+// processing cannot disturb automatic match discovery.
 func (s *Service) Process(ctx context.Context, matchID int64, force bool) (Result, error) {
 	state, err := s.store.Load()
 	if err != nil {
@@ -84,7 +91,7 @@ func (s *Service) Process(ctx context.Context, matchID int64, force bool) (Resul
 
 	now := s.now().UTC()
 	if !force && m.LastAttemptAt != nil && now.Sub(*m.LastAttemptAt) < s.cfg.Replays.RetryInterval.Duration() {
-		return Result{Status: m.Status, ReplayPath: m.ReplayPath}, nil
+		return resultForState(opendota.Match{}, m), nil
 	}
 
 	m.LastAttemptAt = &now
@@ -107,7 +114,7 @@ func (s *Service) Process(ctx context.Context, matchID int64, force bool) (Resul
 				return Result{}, err
 			}
 			s.log.Warn("replay unavailable", "match_id", matchID, "reason", m.LastError)
-			return Result{Match: match, Status: m.Status}, nil
+			return resultForState(match, m), nil
 		}
 
 		m.Status = storage.StatusReplayWaiting
@@ -124,7 +131,7 @@ func (s *Service) Process(ctx context.Context, matchID int64, force bool) (Resul
 		if err := s.store.Save(state); err != nil {
 			return Result{}, err
 		}
-		return Result{Match: match, Status: m.Status}, nil
+		return resultForState(match, m), nil
 	}
 
 	path, err := s.acquirer.Acquire(ctx, match)
@@ -145,7 +152,36 @@ func (s *Service) Process(ctx context.Context, matchID int64, force bool) (Resul
 		return Result{}, err
 	}
 	s.log.Info("replay downloaded", "match_id", matchID, "path", path)
-	return Result{Match: match, Status: m.Status, ReplayPath: path}, nil
+
+	// Keeping this interface optional makes the acquisition layer testable in
+	// isolation and leaves a clean seam for degraded non-replay analysis later.
+	if s.timeline == nil {
+		return resultForState(match, m), nil
+	}
+
+	timelinePath, err := s.timeline.Build(ctx, match, path)
+	if err != nil {
+		m.LastError = err.Error()
+		_ = s.store.Save(state)
+		return Result{}, fmt.Errorf("build replay timeline: %w", err)
+	}
+	m.Status = storage.StatusTimelineReady
+	m.TimelinePath = timelinePath
+	m.LastError = ""
+	if err := s.store.Save(state); err != nil {
+		return Result{}, err
+	}
+	s.log.Info("replay timeline ready", "match_id", matchID, "path", timelinePath)
+	return resultForState(match, m), nil
+}
+
+func resultForState(match opendota.Match, state *storage.MatchState) Result {
+	return Result{
+		Match:        match,
+		Status:       state.Status,
+		ReplayPath:   state.ReplayPath,
+		TimelinePath: state.TimelinePath,
+	}
 }
 
 func (s *Service) retryExpired(startTime int64, now time.Time) bool {
