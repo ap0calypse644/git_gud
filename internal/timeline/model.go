@@ -14,7 +14,7 @@ type MatchTimeline struct {
 	Abilities        []AbilityEvent              `json:"abilities,omitempty"`
 	Items            []ItemEvent                 `json:"items,omitempty"`
 	Buybacks         []BuybackEvent              `json:"buybacks,omitempty"`
-	Objectives       []ObjectiveEvent             `json:"objectives,omitempty"`
+	Objectives       []ObjectiveEvent            `json:"objectives,omitempty"`
 	Fights           []FightWindow               `json:"fights,omitempty"`
 	Visibility       VisibilityTimeline          `json:"visibility"`
 }
@@ -50,7 +50,7 @@ type HeroSample struct {
 // interpreted as "not visible".
 type VisibilityTimeline struct {
 	DirectTeamMaskAvailable bool              `json:"direct_team_mask_available"`
-	Events                  []VisibilityEvent `json:"events,omitempty"`
+	Events                  []VisibilityEvent `json:"events"`
 }
 
 // VisibilityEvent is emitted when a hero's replay-provided team-visibility
