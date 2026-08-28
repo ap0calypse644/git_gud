@@ -23,6 +23,11 @@ func TestDeriveTargetDeathContextsBuildsDeterministicEvidence(t *testing.T) {
 				Team:       dotaTeamRadiant,
 				Samples:    []HeroSample{{T: 20.1, X: 130, Y: 100, Alive: false}},
 			},
+			"4": {
+				PlayerSlot: 4,
+				Team:       dotaTeamRadiant,
+				Samples:    []HeroSample{{T: 20.1, X: 101, Y: 100, Alive: true}},
+			},
 			"128": {PlayerSlot: 128, Team: dotaTeamDire},
 			"129": {PlayerSlot: 129, Team: dotaTeamDire},
 		},
@@ -99,22 +104,30 @@ func TestTargetDeathContextFightBoundaryIsInclusive(t *testing.T) {
 	}
 }
 
-func TestNearestHeroSampleAtRejectsStaleSample(t *testing.T) {
-	player := &PlayerTimeline{Samples: []HeroSample{{T: 10, X: 1, Y: 2, Alive: true}}}
-	if _, ok := nearestHeroSampleAt(player, 14); !ok {
-		t.Fatalf("sample exactly at max age should be accepted")
+func TestHeroSampleAtOrBeforeIsCausalAndRejectsStaleSample(t *testing.T) {
+	player := &PlayerTimeline{Samples: []HeroSample{
+		{T: 10, X: 1, Y: 2, Alive: true},
+		{T: 14.1, X: 9, Y: 9, Alive: true},
+	}}
+	got, ok := heroSampleAtOrBefore(player, 14)
+	if !ok || got.T != 10 {
+		t.Fatalf("got %#v, %v; want prior sample at 10", got, ok)
 	}
-	if _, ok := nearestHeroSampleAt(player, 14.01); ok {
-		t.Fatalf("stale sample should be rejected")
+	if _, ok := heroSampleAtOrBefore(player, 14.01); ok {
+		t.Fatalf("sample older than max age should be rejected")
+	}
+	if _, ok := heroSampleAtOrBefore(&PlayerTimeline{Samples: []HeroSample{{T: 20.1, Alive: true}}}, 20); ok {
+		t.Fatalf("future-only sample should not be used")
 	}
 }
 
-func TestNearbyAlliesExcludeDeadAndStaleSamples(t *testing.T) {
+func TestNearbyAlliesExcludeDeadStaleAndFutureSamples(t *testing.T) {
 	tl := &MatchTimeline{Players: map[string]*PlayerTimeline{
 		"0": {PlayerSlot: 0, Team: dotaTeamRadiant, Samples: []HeroSample{{T: 20, X: 101, Y: 100, Alive: true}}},
 		"1": {PlayerSlot: 1, Team: dotaTeamRadiant, Samples: []HeroSample{{T: 20, X: 100, Y: 100, Alive: false}}},
 		"2": {PlayerSlot: 2, Team: dotaTeamRadiant, Samples: []HeroSample{{T: 20, X: 102, Y: 100, Alive: false}}},
 		"3": {PlayerSlot: 3, Team: dotaTeamRadiant, Samples: []HeroSample{{T: 15.9, X: 103, Y: 100, Alive: true}}},
+		"4": {PlayerSlot: 4, Team: dotaTeamRadiant, Samples: []HeroSample{{T: 20.1, X: 101, Y: 100, Alive: true}}},
 	}}
 	got := nearbyAlliesAt(tl, dotaTeamRadiant, 1, 20, 100, 100)
 	if len(got) != 1 || got[0].PlayerSlot != 0 {
