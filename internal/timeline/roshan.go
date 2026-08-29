@@ -17,6 +17,7 @@ const (
 
 type rawRoshanSpawnerState struct {
 	NetTick                 uint32
+	AbsoluteT               float64
 	Handle                  uint64
 	KillCount               int
 	LastKillerTeam          int
@@ -33,7 +34,7 @@ func newRoshanCollector() *roshanCollector {
 	return &roshanCollector{}
 }
 
-func (c *roshanCollector) observe(e *manta.Entity, netTick uint32) {
+func (c *roshanCollector) observe(e *manta.Entity, netTick uint32, absoluteTime float64) {
 	if e.GetClassName() != "CDOTA_RoshanSpawner" {
 		return
 	}
@@ -46,6 +47,7 @@ func (c *roshanCollector) observe(e *manta.Entity, netTick uint32) {
 
 	state := rawRoshanSpawnerState{
 		NetTick:   netTick,
+		AbsoluteT: absoluteTime,
 		Handle:    handle,
 		KillCount: killCount,
 	}
@@ -81,11 +83,11 @@ func (c *roshanCollector) apply(out *MatchTimeline, gameStartTime float64) {
 	}
 
 	states := append([]rawRoshanSpawnerState(nil), c.states...)
-	sort.Slice(states, func(i, j int) bool { return states[i].NetTick < states[j].NetTick })
+	sort.SliceStable(states, func(i, j int) bool { return states[i].NetTick < states[j].NetTick })
 
 	var stateAtStart *rawRoshanSpawnerState
 	for i := range states {
-		t := float64(states[i].NetTick)/tickRate - gameStartTime
+		t := states[i].AbsoluteT - gameStartTime
 		if t > 0 {
 			break
 		}
@@ -104,7 +106,7 @@ func (c *roshanCollector) apply(out *MatchTimeline, gameStartTime float64) {
 	for i := 1; i < len(states); i++ {
 		previous := states[i-1]
 		current := states[i]
-		t := float64(current.NetTick)/tickRate - gameStartTime
+		t := current.AbsoluteT - gameStartTime
 		if t < 0 {
 			continue
 		}
