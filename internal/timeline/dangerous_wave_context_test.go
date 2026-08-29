@@ -59,13 +59,21 @@ func TestDeriveTargetWaveDangerContextCausalEvidence(t *testing.T) {
 			}},
 		},
 	}
+	towerPositions := []LaneTowerPosition{
+		{Team: 2, Lane: "bottom", Tier: 3, X: 80, Y: 100},
+		{Team: 2, Lane: "bottom", Tier: 2, X: 90, Y: 100},
+		{Team: 2, Lane: "bottom", Tier: 1, X: 100, Y: 100},
+		{Team: 3, Lane: "bottom", Tier: 1, X: 110, Y: 110},
+		{Team: 3, Lane: "bottom", Tier: 2, X: 110, Y: 120},
+		{Team: 3, Lane: "bottom", Tier: 3, X: 110, Y: 130},
+	}
 
-	got := DeriveTargetWaveDangerContext(tl)
+	got := DeriveTargetWaveDangerContext(tl, towerPositions)
 	if !got.Available {
 		t.Fatal("expected dangerous-wave context capability to be available")
 	}
-	if got.LaneProgressAvailable {
-		t.Fatal("lane progress must remain unavailable until geometry is validated")
+	if !got.LaneProgressAvailable || len(got.LaneGeometries) != 1 {
+		t.Fatalf("expected validated lane progress geometry: %#v", got)
 	}
 	if len(got.Contexts) != 1 || len(got.Contexts[0].Snapshots) != 1 {
 		t.Fatalf("expected one context with one deduplicated snapshot, got %#v", got.Contexts)
@@ -77,6 +85,18 @@ func TestDeriveTargetWaveDangerContextCausalEvidence(t *testing.T) {
 	}
 	if !s.WaveAvailable || s.WaveSampleT != 9 || s.WaveX != 102 || s.CreepCount != 4 {
 		t.Fatalf("wave lookup used future or wrong sample: %#v", s)
+	}
+	if !s.LaneProgressAvailable || s.TargetLaneProgressWorld != 20*laneProgressWorldScale || s.TargetLaneOffsetWorld != 0 {
+		t.Fatalf("unexpected target lane progress: %#v", s)
+	}
+	if !s.WaveLaneProgressAvailable || s.WaveLaneProgressWorld != 22*laneProgressWorldScale || s.WaveLaneOffsetWorld != 0 {
+		t.Fatalf("unexpected wave lane progress: %#v", s)
+	}
+	if !s.FriendlyRetreatReferenceAvailable || s.FriendlyRetreatReferenceTier != 2 || s.TargetForwardOfFriendlyReferenceWorld != 10*laneProgressWorldScale {
+		t.Fatalf("unexpected friendly retreat reference: %#v", s)
+	}
+	if !s.EnemyForwardReferenceAvailable || s.EnemyForwardReferenceTier != 1 || s.TargetForwardOfEnemyReferenceWorld != -20*laneProgressWorldScale {
+		t.Fatalf("future enemy tower destruction leaked into forward reference: %#v", s)
 	}
 	if len(s.NearbyAllies) != 1 || s.NearbyAllies[0].SampleT != 9 || s.NearbyAllies[0].DistanceWorld != 128 {
 		t.Fatalf("ally context not causal: %#v", s.NearbyAllies)
@@ -92,6 +112,30 @@ func TestDeriveTargetWaveDangerContextCausalEvidence(t *testing.T) {
 	}
 	if s.EnemyKnowledge[0].LastSeenX != nil || s.EnemyKnowledge[0].LastSeenY != nil {
 		t.Fatalf("active visibility leaked future endpoint position: %#v", s.EnemyKnowledge[0])
+	}
+}
+
+func TestDeriveTargetWaveDangerContextLaneProgressFailsClosedWithoutGeometry(t *testing.T) {
+	tl := &MatchTimeline{
+		TargetPlayerSlot: 1,
+		Players: map[string]*PlayerTimeline{
+			"1": {PlayerSlot: 1, Team: 2, Samples: []HeroSample{{T: 10, X: 100, Y: 100, Alive: true}}},
+		},
+		TargetWaveTaking: TargetWaveTakingTimeline{
+			Available: true,
+			Periods: []TargetWaveTakingPeriod{{
+				WaveID: "3:60:bottom", Lane: "bottom", EnemyTeam: 3,
+				StartT: 10, EndT: 10, ExposureStartT: 10, ExposureEndT: 10,
+				FirstDepletionT: 10, LastDepletionT: 10,
+			}},
+		},
+	}
+	got := DeriveTargetWaveDangerContext(tl)
+	if !got.Available {
+		t.Fatal("base M16 context should remain available without geometry")
+	}
+	if got.LaneProgressAvailable || got.LaneProgressUnavailableReason == "" {
+		t.Fatalf("lane progress must fail closed without geometry: %#v", got)
 	}
 }
 
