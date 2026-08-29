@@ -117,6 +117,9 @@ func (s *Service) processPending(ctx context.Context) error {
 		if m.Status == storage.StatusCoachingReady || m.Status == storage.StatusReplayUnavailable {
 			continue
 		}
+		if !s.cfg.Coaching.Enabled && m.Status == storage.StatusTimelineReady {
+			continue
+		}
 		ids = append(ids, m.MatchID)
 	}
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
