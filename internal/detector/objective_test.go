@@ -23,10 +23,15 @@ func TestAssessObjectiveMissEmitsConservativeKnownObjectiveCandidate(t *testing.
 		assessment.Evidence.EnemyFrontTowerOptions[2] != (ObjectiveTowerOption{Lane: "top", Tier: 1}) {
 		t.Fatalf("unexpected front tower options = %#v", assessment.Evidence.EnemyFrontTowerOptions)
 	}
+	if len(assessment.Evidence.EnemyPushableTowerOptions) != 2 ||
+		assessment.Evidence.EnemyPushableTowerOptions[0] != (ObjectiveTowerOption{Lane: "bottom", Tier: 1}) ||
+		assessment.Evidence.EnemyPushableTowerOptions[1] != (ObjectiveTowerOption{Lane: "top", Tier: 1}) {
+		t.Fatalf("pushable tower options = %#v", assessment.Evidence.EnemyPushableTowerOptions)
+	}
 	if assessment.Evidence.RoshanKnowledgeState != "known_alive_from_game_start" || !assessment.Evidence.RoshanKnownAliveForDecision {
 		t.Fatalf("Roshan evidence = %#v", assessment.Evidence)
 	}
-	if assessment.Evidence.KnownObjectiveOptionCount != 4 || !assessment.Evidence.KnownObjectiveOptions {
+	if assessment.Evidence.KnownObjectiveOptionCount != 3 || !assessment.Evidence.KnownObjectiveOptions {
 		t.Fatalf("objective option evidence = %#v", assessment.Evidence)
 	}
 	if !assessment.Evidence.EnemyDeathWindowEndStateAvailable || assessment.Evidence.EnemyDeathsStillDeadAtWindowEnd != 1 {
@@ -69,13 +74,13 @@ func TestAssessObjectiveMissDoesNotLeakHiddenRoshanRespawnWhenTowerOptionExists(
 	}
 	assessment := assessObjectiveMiss(tl, ctx)
 	if !assessment.Candidate {
-		t.Fatalf("known tower options should still support candidate: %#v", assessment)
+		t.Fatalf("unprotected T1 options should still support candidate: %#v", assessment)
 	}
 	if assessment.Evidence.RoshanKnownAliveForDecision {
 		t.Fatalf("hidden respawn leaked into decision evidence: %#v", assessment.Evidence)
 	}
-	if assessment.Evidence.KnownObjectiveOptionCount != 3 {
-		t.Fatalf("hidden Roshan should not count as objective option: %#v", assessment.Evidence)
+	if assessment.Evidence.KnownObjectiveOptionCount != 2 {
+		t.Fatalf("hidden Roshan/T2 without creep support should not count: %#v", assessment.Evidence)
 	}
 }
 
@@ -98,6 +103,94 @@ func TestAssessObjectiveMissSuppressesWhenNoObjectiveKnownAvailable(t *testing.T
 	}
 	if assessment.Evidence.KnownObjectiveOptions || assessment.Evidence.KnownObjectiveOptionCount != 0 {
 		t.Fatalf("objective availability = %#v, want none", assessment.Evidence)
+	}
+}
+
+func TestAssessObjectiveMissRequiresCreepSupportForTier2(t *testing.T) {
+	tl, ctx := baseObjectiveFixture()
+	ctx.RoshanAtEnd.KnownAliveForDecision = false
+	ctx.RoshanAtEnd.KnowledgeState = "known_dead_from_kill"
+	for i := range ctx.EnemyLaneStructuresAtEnd {
+		state := &ctx.EnemyLaneStructuresAtEnd[i]
+		if state.Lane == "mid" {
+			continue
+		}
+		state.Tier1KnownAlive = false
+		state.Tier2KnownAlive = false
+		state.Tier3KnownAlive = false
+	}
+
+	withoutSupport := assessObjectiveMiss(tl, ctx)
+	if withoutSupport.Candidate {
+		t.Fatalf("unsupported T2 emitted candidate: %#v", withoutSupport)
+	}
+
+	tl.CreepClusters.Frames = []timeline.CreepClusterFrame{{
+		T: 125,
+		Clusters: []timeline.CreepCluster{{
+			Team: 2, CenterX: 150, CenterY: 150, CreepCount: 4, LaneCreepCount: 4,
+			MaxMemberDistanceWorld: 100,
+		}},
+	}}
+	withSupport := assessObjectiveMiss(tl, ctx)
+	if !withSupport.Candidate {
+		t.Fatalf("supported T2 suppressed: %#v", withSupport)
+	}
+	if len(withSupport.Evidence.EnemyPushableTowerOptions) != 1 || withSupport.Evidence.EnemyPushableTowerOptions[0] != (ObjectiveTowerOption{Lane: "mid", Tier: 2}) {
+		t.Fatalf("T2 pushable evidence = %#v", withSupport.Evidence.EnemyPushableTowerOptions)
+	}
+}
+
+func TestAssessObjectiveMissRequiresAncientCreepSupportForTier3(t *testing.T) {
+	tl, ctx := baseObjectiveFixture()
+	ctx.RoshanAtEnd.KnownAliveForDecision = false
+	ctx.RoshanAtEnd.KnowledgeState = "known_dead_from_kill"
+	for i := range ctx.EnemyLaneStructuresAtEnd {
+		state := &ctx.EnemyLaneStructuresAtEnd[i]
+		state.Tier1KnownAlive = false
+		state.Tier2KnownAlive = false
+		state.Tier3KnownAlive = false
+		if state.Lane == "mid" {
+			state.Tier1Destroyed = true
+			state.Tier2Destroyed = true
+			state.Tier3KnownAlive = true
+		}
+	}
+
+	withoutSupport := assessObjectiveMiss(tl, ctx)
+	if withoutSupport.Candidate {
+		t.Fatalf("unsupported T3 emitted candidate: %#v", withoutSupport)
+	}
+
+	tl.CreepClusters.Frames = []timeline.CreepClusterFrame{{
+		T: 118,
+		Clusters: []timeline.CreepCluster{{
+			Team: 2, CenterX: 170, CenterY: 170, CreepCount: 5, LaneCreepCount: 4, SiegeCreepCount: 1,
+			MaxMemberDistanceWorld: 250,
+		}},
+	}}
+	withSupport := assessObjectiveMiss(tl, ctx)
+	if !withSupport.Candidate {
+		t.Fatalf("supported T3 suppressed: %#v", withSupport)
+	}
+	if len(withSupport.Evidence.EnemyPushableTowerOptions) != 1 || withSupport.Evidence.EnemyPushableTowerOptions[0] != (ObjectiveTowerOption{Lane: "mid", Tier: 3}) {
+		t.Fatalf("T3 pushable evidence = %#v", withSupport.Evidence.EnemyPushableTowerOptions)
+	}
+}
+
+func TestObjectiveCreepBackdoorSupportFailsClosedOnClusterSpread(t *testing.T) {
+	clusters := timeline.CreepClusterTimeline{
+		Available: true,
+		Frames: []timeline.CreepClusterFrame{{
+			T: 100,
+			Clusters: []timeline.CreepCluster{{
+				Team: 2, CenterX: 100, CenterY: 100, CreepCount: 2, LaneCreepCount: 2,
+				MaxMemberDistanceWorld: 901,
+			}},
+		}},
+	}
+	if objectiveCreepBackdoorSupport(clusters, 2, 100, 100, 900, 90, 110) {
+		t.Fatal("cluster whose member spread exceeds mechanic radius should fail closed")
 	}
 }
 
@@ -168,6 +261,22 @@ func baseObjectiveFixture() (*timeline.MatchTimeline, timeline.PostFightObjectiv
 			},
 		},
 		Deaths: []timeline.DeathEvent{{T: 115, VictimSlot: &enemySlot}},
+		CreepClusters: timeline.CreepClusterTimeline{Available: true, Frames: []timeline.CreepClusterFrame{}},
+		LaneStructures: timeline.LaneStructureTimeline{
+			Available: true,
+			InitialTowers: []timeline.LaneStructureInitialTower{
+				{Team: 3, Lane: "top", Tier: 1, X: 180, Y: 180},
+				{Team: 3, Lane: "top", Tier: 2, X: 175, Y: 175},
+				{Team: 3, Lane: "top", Tier: 3, X: 170, Y: 170},
+				{Team: 3, Lane: "mid", Tier: 1, X: 155, Y: 155},
+				{Team: 3, Lane: "mid", Tier: 2, X: 150, Y: 150},
+				{Team: 3, Lane: "mid", Tier: 3, X: 165, Y: 165},
+				{Team: 3, Lane: "bottom", Tier: 1, X: 180, Y: 140},
+				{Team: 3, Lane: "bottom", Tier: 2, X: 175, Y: 150},
+				{Team: 3, Lane: "bottom", Tier: 3, X: 170, Y: 160},
+			},
+			InitialForts: []timeline.LaneStructureInitialFort{{Team: 3, X: 171, Y: 167}},
+		},
 	}
 	ctx := timeline.PostFightObjectiveContext{
 		FightIndex:                12,
