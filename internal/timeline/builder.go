@@ -50,6 +50,7 @@ func (b *Builder) Build(_ context.Context, match opendota.Match, replayPath stri
 	parsed.TargetWaveTaking = DeriveTargetWaveTaking(&parsed)
 	parsed.TargetWaveDanger = DeriveTargetWaveDangerContext(&parsed, parsed.LaneTowerPositions)
 	parsed.TargetFightContexts = DeriveTargetFightContexts(&parsed)
+	parsed.TargetPostFightObjectives = DerivePostFightObjectiveTimeline(&parsed)
 	parsed.TargetPostWaveOverstay = DeriveTargetPostWaveOverstay(&parsed)
 	parsed.TargetDeathContexts = DeriveTargetDeathContexts(&parsed)
 	return WriteJSON(b.storageRoot, parsed)
