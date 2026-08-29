@@ -55,6 +55,21 @@ func BuildMatchCoachingInput(tl *timeline.MatchTimeline) MatchCoachingInput {
 		})
 	}
 
+	objectiveAnalysis := detector.AnalyzeObjectives(tl)
+	for _, candidate := range objectiveAnalysis.Candidates {
+		evidence, startT, endT, ok := objectiveCandidateEvidence(candidate)
+		if !ok {
+			continue
+		}
+		out.Moments = append(out.Moments, CoachingMoment{
+			Type:       candidate.Type,
+			StartT:     startT,
+			EndT:       endT,
+			Confidence: candidate.Confidence,
+			Evidence:   evidence,
+		})
+	}
+
 	sort.SliceStable(out.Moments, func(i, j int) bool {
 		if out.Moments[i].StartT == out.Moments[j].StartT {
 			return out.Moments[i].Type < out.Moments[j].Type
@@ -95,6 +110,55 @@ func fightCandidateEvidence(candidate detector.FightCandidate) (any, bool) {
 		return *candidate.MissedFight, true
 	default:
 		return nil, false
+	}
+}
+
+func objectiveCandidateEvidence(candidate detector.ObjectiveCandidate) (PostFightConversionReviewEvidence, float64, float64, bool) {
+	if candidate.Type != detector.TypePostFightConversionReviewCandidate || candidate.Objective == nil {
+		return PostFightConversionReviewEvidence{}, 0, 0, false
+	}
+	source := candidate.Objective
+	if source.FightObservedEndT < source.FightObservedStartT || source.WindowStartT < source.FightObservedEndT || source.WindowEndT < source.WindowStartT {
+		return PostFightConversionReviewEvidence{}, 0, 0, false
+	}
+
+	pushable := make([]ObjectiveReviewTowerOption, 0, len(source.EnemyPushableTowerOptions))
+	for _, option := range source.EnemyPushableTowerOptions {
+		if !validObjectiveLane(option.Lane) || option.Tier < 1 || option.Tier > 3 {
+			return PostFightConversionReviewEvidence{}, 0, 0, false
+		}
+		pushable = append(pushable, ObjectiveReviewTowerOption{Lane: option.Lane, Tier: option.Tier})
+	}
+
+	evidence := PostFightConversionReviewEvidence{
+		FightIndex:                    source.FightIndex,
+		FightObservedStartT:           source.FightObservedStartT,
+		FightObservedEndT:             source.FightObservedEndT,
+		WindowStartT:                  source.WindowStartT,
+		WindowEndT:                    source.WindowEndT,
+		WindowEndReason:               source.WindowEndReason,
+		WindowDurationSeconds:         source.WindowDurationSeconds,
+		TargetAliveAtFightEnd:         source.TargetAliveAtEnd,
+		AlliedHeroesAliveAtFightEnd:   source.AlliedHeroesAliveAtEnd,
+		AlliedDeaths:                  source.AlliedDeaths,
+		EnemyDeaths:                   source.EnemyDeaths,
+		EnemyDeathAdvantage:           source.EnemyDeathAdvantage,
+		EnemyDeathsStillDeadAtEnd:     source.EnemyDeathsStillDeadAtWindowEnd,
+		PushableTowerOptions:          pushable,
+		RoshanKnowledgeState:          source.RoshanKnowledgeState,
+		RoshanKnownAliveForDecision:   source.RoshanKnownAliveForDecision,
+		TargetTeamConversionCount:     source.TargetTeamConversionCount,
+		NoTargetTeamConversion:        source.NoTargetTeamConversion,
+	}
+	return evidence, source.FightObservedStartT, source.WindowEndT, true
+}
+
+func validObjectiveLane(lane string) bool {
+	switch lane {
+	case "top", "mid", "bottom":
+		return true
+	default:
+		return false
 	}
 }
 
