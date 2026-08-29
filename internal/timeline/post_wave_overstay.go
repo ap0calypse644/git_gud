@@ -31,11 +31,11 @@ type TargetPostWaveOverstayContext struct {
 	ExposureEndT      float64 `json:"exposure_end_t"`
 	ObservedCreepLoss int     `json:"observed_creep_loss"`
 
-	EndState         TargetPostWaveState        `json:"end_state"`
-	ExposureEndState TargetPostWaveState        `json:"exposure_end_state"`
-	PostPrimary      TargetPostWaveChange       `json:"post_primary"`
-	NextCohort       TargetPostWaveNextCohort   `json:"next_cohort"`
-	Outcome          TargetPostWaveOutcome      `json:"outcome"`
+	EndState         TargetPostWaveState      `json:"end_state"`
+	ExposureEndState TargetPostWaveState      `json:"exposure_end_state"`
+	PostPrimary      TargetPostWaveChange     `json:"post_primary"`
+	NextCohort       TargetPostWaveNextCohort `json:"next_cohort"`
+	Outcome          TargetPostWaveOutcome    `json:"outcome"`
 }
 
 // TargetPostWaveState is a compact, causal M16 state summary. Enemy hero replay
@@ -46,15 +46,15 @@ type TargetPostWaveState struct {
 	TargetAvailable bool    `json:"target_available"`
 	TargetAlive     bool    `json:"target_alive"`
 
-	LaneProgressWorld                   *float64 `json:"lane_progress_world,omitempty"`
-	LaneOffsetWorld                     *float64 `json:"lane_offset_world,omitempty"`
-	FriendlyReferenceTier               int      `json:"friendly_reference_tier,omitempty"`
-	ForwardOfFriendlyReferenceWorld     *float64 `json:"forward_of_friendly_reference_world,omitempty"`
-	EnemyReferenceTier                  int      `json:"enemy_reference_tier,omitempty"`
-	ForwardOfEnemyReferenceWorld        *float64 `json:"forward_of_enemy_reference_world,omitempty"`
+	LaneProgressWorld               *float64 `json:"lane_progress_world,omitempty"`
+	LaneOffsetWorld                 *float64 `json:"lane_offset_world,omitempty"`
+	FriendlyReferenceTier           int      `json:"friendly_reference_tier,omitempty"`
+	ForwardOfFriendlyReferenceWorld *float64 `json:"forward_of_friendly_reference_world,omitempty"`
+	EnemyReferenceTier              int      `json:"enemy_reference_tier,omitempty"`
+	ForwardOfEnemyReferenceWorld    *float64 `json:"forward_of_enemy_reference_world,omitempty"`
 
-	SupportAvailable         bool     `json:"support_available"`
-	FreshLivingAllies       int      `json:"fresh_living_allies"`
+	SupportAvailable          bool     `json:"support_available"`
+	FreshLivingAllies        int      `json:"fresh_living_allies"`
 	NearestAllyDistanceWorld *float64 `json:"nearest_ally_distance_world,omitempty"`
 
 	EnemyKnowledgeAvailable bool     `json:"enemy_knowledge_available"`
@@ -70,13 +70,15 @@ type TargetPostWaveState struct {
 // positive nearest-ally distance means support became farther away. No
 // magnitude is treated as a judgment threshold here.
 type TargetPostWaveChange struct {
-	DurationSeconds                    float64  `json:"duration_seconds"`
-	LaneProgressDeltaWorld             *float64 `json:"lane_progress_delta_world,omitempty"`
-	FreshLivingAlliesDelta             int      `json:"fresh_living_allies_delta"`
-	NearestAllyDistanceDeltaWorld      *float64 `json:"nearest_ally_distance_delta_world,omitempty"`
-	EstimatedVisibleEnemiesDelta       int      `json:"estimated_visible_enemies_delta"`
-	MissingEnemiesDelta                int      `json:"missing_enemies_delta"`
-	MaxLastSeenAgeDeltaSeconds         *float64 `json:"max_last_seen_age_delta_seconds,omitempty"`
+	DurationSeconds               float64  `json:"duration_seconds"`
+	LaneProgressDeltaWorld        *float64 `json:"lane_progress_delta_world,omitempty"`
+	SupportChangeAvailable        bool     `json:"support_change_available"`
+	FreshLivingAlliesDelta        int      `json:"fresh_living_allies_delta"`
+	NearestAllyDistanceDeltaWorld *float64 `json:"nearest_ally_distance_delta_world,omitempty"`
+	EnemyKnowledgeChangeAvailable bool     `json:"enemy_knowledge_change_available"`
+	EstimatedVisibleEnemiesDelta  int      `json:"estimated_visible_enemies_delta"`
+	MissingEnemiesDelta           int      `json:"missing_enemies_delta"`
+	MaxLastSeenAgeDeltaSeconds    *float64 `json:"max_last_seen_age_delta_seconds,omitempty"`
 }
 
 // TargetPostWaveNextCohort links the immediately following replay-reconstructed
@@ -169,11 +171,11 @@ func targetWaveDangerSnapshotByKind(snapshots []TargetWaveDangerSnapshot, kind s
 
 func summarizeTargetPostWaveState(snapshot TargetWaveDangerSnapshot) TargetPostWaveState {
 	out := TargetPostWaveState{
-		T:               snapshot.T,
-		TargetAvailable: snapshot.TargetAvailable,
-		TargetAlive:     snapshot.TargetAlive,
-		SupportAvailable: snapshot.TargetAvailable,
-		FreshLivingAllies: len(snapshot.NearbyAllies),
+		T:                       snapshot.T,
+		TargetAvailable:         snapshot.TargetAvailable,
+		TargetAlive:             snapshot.TargetAlive,
+		SupportAvailable:        snapshot.TargetAvailable,
+		FreshLivingAllies:       len(snapshot.NearbyAllies),
 		EnemyKnowledgeAvailable: len(snapshot.EnemyKnowledge) > 0,
 	}
 
@@ -212,23 +214,27 @@ func summarizeTargetPostWaveState(snapshot TargetWaveDangerSnapshot) TargetPostW
 }
 
 func summarizeTargetPostWaveChange(end, exposureEnd TargetPostWaveState, endT, exposureEndT float64) TargetPostWaveChange {
-	out := TargetPostWaveChange{
-		DurationSeconds:              exposureEndT - endT,
-		FreshLivingAlliesDelta:       exposureEnd.FreshLivingAllies - end.FreshLivingAllies,
-		EstimatedVisibleEnemiesDelta: exposureEnd.EstimatedVisibleEnemies - end.EstimatedVisibleEnemies,
-		MissingEnemiesDelta:          exposureEnd.MissingEnemies - end.MissingEnemies,
-	}
+	out := TargetPostWaveChange{DurationSeconds: exposureEndT - endT}
 	if out.DurationSeconds < 0 {
 		out.DurationSeconds = 0
 	}
 	if end.LaneProgressWorld != nil && exposureEnd.LaneProgressWorld != nil {
 		out.LaneProgressDeltaWorld = postWaveFloat64(*exposureEnd.LaneProgressWorld - *end.LaneProgressWorld)
 	}
-	if end.NearestAllyDistanceWorld != nil && exposureEnd.NearestAllyDistanceWorld != nil {
-		out.NearestAllyDistanceDeltaWorld = postWaveFloat64(*exposureEnd.NearestAllyDistanceWorld - *end.NearestAllyDistanceWorld)
+	if end.SupportAvailable && exposureEnd.SupportAvailable {
+		out.SupportChangeAvailable = true
+		out.FreshLivingAlliesDelta = exposureEnd.FreshLivingAllies - end.FreshLivingAllies
+		if end.NearestAllyDistanceWorld != nil && exposureEnd.NearestAllyDistanceWorld != nil {
+			out.NearestAllyDistanceDeltaWorld = postWaveFloat64(*exposureEnd.NearestAllyDistanceWorld - *end.NearestAllyDistanceWorld)
+		}
 	}
-	if end.MaxLastSeenAgeSeconds != nil && exposureEnd.MaxLastSeenAgeSeconds != nil {
-		out.MaxLastSeenAgeDeltaSeconds = postWaveFloat64(*exposureEnd.MaxLastSeenAgeSeconds - *end.MaxLastSeenAgeSeconds)
+	if end.EnemyKnowledgeAvailable && exposureEnd.EnemyKnowledgeAvailable {
+		out.EnemyKnowledgeChangeAvailable = true
+		out.EstimatedVisibleEnemiesDelta = exposureEnd.EstimatedVisibleEnemies - end.EstimatedVisibleEnemies
+		out.MissingEnemiesDelta = exposureEnd.MissingEnemies - end.MissingEnemies
+		if end.MaxLastSeenAgeSeconds != nil && exposureEnd.MaxLastSeenAgeSeconds != nil {
+			out.MaxLastSeenAgeDeltaSeconds = postWaveFloat64(*exposureEnd.MaxLastSeenAgeSeconds - *end.MaxLastSeenAgeSeconds)
+		}
 	}
 	return out
 }
@@ -287,16 +293,24 @@ func nextTakingPeriodForWave(periods []TargetWaveTakingPeriod, waveID string, pr
 }
 
 func summarizePostWaveOutcome(tl *MatchTimeline, primaryEndT float64) TargetPostWaveOutcome {
+	var nextT float64
+	found := false
 	for _, death := range tl.Deaths {
 		if death.VictimSlot == nil || *death.VictimSlot != tl.TargetPlayerSlot || death.T <= primaryEndT {
 			continue
 		}
-		return TargetPostWaveOutcome{
-			NextTargetDeathT:             postWaveFloat64(death.T),
-			SecondsFromPrimaryEndToDeath: postWaveFloat64(death.T - primaryEndT),
+		if !found || death.T < nextT {
+			nextT = death.T
+			found = true
 		}
 	}
-	return TargetPostWaveOutcome{}
+	if !found {
+		return TargetPostWaveOutcome{}
+	}
+	return TargetPostWaveOutcome{
+		NextTargetDeathT:             postWaveFloat64(nextT),
+		SecondsFromPrimaryEndToDeath: postWaveFloat64(nextT - primaryEndT),
+	}
 }
 
 func postWaveFloat64(v float64) *float64 {
