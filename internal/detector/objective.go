@@ -12,7 +12,7 @@ const TypeObjectiveMissCandidate = "objective_miss_candidate"
 // ObjectiveAnalysis keeps an assessment for every post-fight objective context
 // so calibration can inspect both emitted candidates and suppressed cases.
 // Candidates are low-confidence review targets only; they are not a claim that
-// Roshan should definitely have been taken.
+// any particular objective definitely should have been taken.
 type ObjectiveAnalysis struct {
 	MatchID     int64                 `json:"match_id"`
 	Assessments []ObjectiveAssessment `json:"assessments"`
@@ -31,6 +31,14 @@ type ObjectiveCandidate struct {
 	T          float64                `json:"t"`
 	Confidence string                 `json:"confidence"`
 	Objective  *ObjectiveMissEvidence `json:"objective,omitempty"`
+}
+
+// ObjectiveTowerOption is one lane-front tower that was causally known alive
+// at fight end. Tier is the first still-alive tier in that lane after all
+// lower tiers have observed destruction events.
+type ObjectiveTowerOption struct {
+	Lane string `json:"lane"`
+	Tier int    `json:"tier"`
 }
 
 // ObjectiveMissEvidence contains only decision-safe state plus retrospective
@@ -58,11 +66,14 @@ type ObjectiveMissEvidence struct {
 	EnemyDeathVictimSlots             []int `json:"enemy_death_victim_slots"`
 	EnemyDeathsStillDeadAtWindowEnd   int   `json:"enemy_deaths_still_dead_at_window_end"`
 
-	EnemyTier1sDestroyedAtEnd []string `json:"enemy_tier1s_destroyed_at_end"`
-	EnemyMapOpened            bool     `json:"enemy_map_opened"`
+	EnemyTier1sDestroyedAtEnd []string               `json:"enemy_tier1s_destroyed_at_end"`
+	EnemyMapOpened            bool                   `json:"enemy_map_opened"`
+	EnemyFrontTowerOptions    []ObjectiveTowerOption `json:"enemy_front_tower_options"`
 
 	RoshanKnowledgeState        string `json:"roshan_knowledge_state,omitempty"`
 	RoshanKnownAliveForDecision bool   `json:"roshan_known_alive_for_decision"`
+	KnownObjectiveOptionCount   int    `json:"known_objective_option_count"`
+	KnownObjectiveOptions       bool   `json:"known_objective_options"`
 
 	TargetTeamConversionCount int  `json:"target_team_conversion_count"`
 	NoTargetTeamConversion    bool `json:"no_target_team_conversion"`
@@ -74,8 +85,10 @@ type ObjectiveMissEvidence struct {
 //   - the team won a clean fight (enemy death(s), no allied deaths);
 //   - complete five-player allied end-state sampling says all allies were alive;
 //   - at least one enemy tier-one tower was already down, a conservative
-//     map-state signal that suppresses obvious early-game Roshan noise;
-//   - Roshan was causally knowable as alive (never a hidden random respawn);
+//     map-state signal that suppresses obvious early-game conversion noise;
+//   - at least one objective was causally known to be available: either the
+//     lane-front tower in an opened lane or Roshan known alive without hidden
+//     random-respawn leakage;
 //   - a real non-overlapping post-fight interval existed;
 //   - at least one enemy killed in that fight was still dead at the end of the
 //     clean interval, confirming a sustained power-play rather than a momentary
@@ -83,8 +96,8 @@ type ObjectiveMissEvidence struct {
 //   - the target team converted neither Roshan nor a building in that interval.
 //
 // This remains a review candidate rather than a strategic verdict because the
-// detector does not yet model Roshan damage capability, path safety, buyback
-// intent, or team communication.
+// detector does not model path safety, objective damage capability, buyback
+// intent, wave position, or team communication.
 func AnalyzeObjectives(tl *timeline.MatchTimeline) ObjectiveAnalysis {
 	out := ObjectiveAnalysis{Assessments: []ObjectiveAssessment{}, Candidates: []ObjectiveCandidate{}}
 	if tl == nil {
@@ -128,14 +141,28 @@ func AnalyzeObjectives(tl *timeline.MatchTimeline) ObjectiveAnalysis {
 
 func assessObjectiveMiss(tl *timeline.MatchTimeline, ctx timeline.PostFightObjectiveContext) ObjectiveAssessment {
 	destroyedT1s := make([]string, 0, 3)
+	frontTowers := make([]ObjectiveTowerOption, 0, 3)
 	for _, state := range ctx.EnemyLaneStructuresAtEnd {
 		if state.Tier1Destroyed {
 			destroyedT1s = append(destroyedT1s, state.Lane)
 		}
+		if option, ok := objectiveFrontTower(state); ok {
+			frontTowers = append(frontTowers, option)
+		}
 	}
 	sort.Strings(destroyedT1s)
+	sort.SliceStable(frontTowers, func(i, j int) bool {
+		if frontTowers[i].Lane == frontTowers[j].Lane {
+			return frontTowers[i].Tier < frontTowers[j].Tier
+		}
+		return frontTowers[i].Lane < frontTowers[j].Lane
+	})
 
 	deathStateAvailable, deathSlots, stillDead := enemyDeathStateAtWindowEnd(tl, ctx)
+	knownObjectiveOptionCount := len(frontTowers)
+	if ctx.RoshanAtEnd.KnownAliveForDecision {
+		knownObjectiveOptionCount++
+	}
 	evidence := ObjectiveMissEvidence{
 		FightIndex:                         ctx.FightIndex,
 		FightObservedStartT:                ctx.FightObservedStartT,
@@ -156,8 +183,11 @@ func assessObjectiveMiss(tl *timeline.MatchTimeline, ctx timeline.PostFightObjec
 		EnemyDeathsStillDeadAtWindowEnd:    stillDead,
 		EnemyTier1sDestroyedAtEnd:          destroyedT1s,
 		EnemyMapOpened:                     len(destroyedT1s) > 0,
+		EnemyFrontTowerOptions:             frontTowers,
 		RoshanKnowledgeState:               ctx.RoshanAtEnd.KnowledgeState,
 		RoshanKnownAliveForDecision:        ctx.RoshanAtEnd.KnownAliveForDecision,
+		KnownObjectiveOptionCount:          knownObjectiveOptionCount,
+		KnownObjectiveOptions:              knownObjectiveOptionCount > 0,
 		TargetTeamConversionCount:          len(ctx.TargetTeamConversions),
 		NoTargetTeamConversion:             len(ctx.TargetTeamConversions) == 0,
 	}
@@ -176,7 +206,7 @@ func assessObjectiveMiss(tl *timeline.MatchTimeline, ctx timeline.PostFightObjec
 		evidence.EnemyDeathWindowEndStateAvailable &&
 		evidence.EnemyDeathsStillDeadAtWindowEnd > 0 &&
 		evidence.EnemyMapOpened &&
-		evidence.RoshanKnownAliveForDecision &&
+		evidence.KnownObjectiveOptions &&
 		evidence.NoTargetTeamConversion
 
 	return ObjectiveAssessment{
@@ -184,6 +214,19 @@ func assessObjectiveMiss(tl *timeline.MatchTimeline, ctx timeline.PostFightObjec
 		T:          ctx.FightObservedEndT,
 		Candidate:  candidate,
 		Evidence:   evidence,
+	}
+}
+
+func objectiveFrontTower(state timeline.LaneStructureState) (ObjectiveTowerOption, bool) {
+	switch {
+	case state.Tier1KnownAlive:
+		return ObjectiveTowerOption{Lane: state.Lane, Tier: 1}, true
+	case state.Tier1Destroyed && state.Tier2KnownAlive:
+		return ObjectiveTowerOption{Lane: state.Lane, Tier: 2}, true
+	case state.Tier1Destroyed && state.Tier2Destroyed && state.Tier3KnownAlive:
+		return ObjectiveTowerOption{Lane: state.Lane, Tier: 3}, true
+	default:
+		return ObjectiveTowerOption{}, false
 	}
 }
 
