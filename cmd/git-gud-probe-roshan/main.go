@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strings"
 
 	"github.com/dotabuff/manta"
 )
@@ -19,7 +18,9 @@ var roshanProbeFields = []string{
 	"m_iMaxHealth",
 	"m_lifeState",
 	"m_bIsWaitingToSpawn",
-	"m_bIsAncient",
+	"m_iKillCount",
+	"m_iLastKillerTeam",
+	"m_hRoshan",
 	"CBodyComponent.m_cellX",
 	"CBodyComponent.m_cellY",
 	"CBodyComponent.m_vecX",
@@ -27,20 +28,19 @@ var roshanProbeFields = []string{
 }
 
 type entitySummary struct {
-	Index              int32               `json:"index"`
-	Serial             int32               `json:"serial"`
-	ClassName          string              `json:"class_name"`
-	ResolvedEntityName string              `json:"resolved_entity_name,omitempty"`
-	Created            int                 `json:"created"`
-	Updated            int                 `json:"updated"`
-	Deleted            int                 `json:"deleted"`
-	Entered            int                 `json:"entered"`
-	Left               int                 `json:"left"`
-	FirstNetTick       uint32              `json:"first_net_tick"`
-	LastNetTick        uint32              `json:"last_net_tick"`
-	SampleFields       []string            `json:"sample_fields"`
-	SampleValues       map[string][]string `json:"sample_values"`
-	Transitions        []transition        `json:"transitions"`
+	Index        int32               `json:"index"`
+	Serial       int32               `json:"serial"`
+	ClassName    string              `json:"class_name"`
+	Created      int                 `json:"created"`
+	Updated      int                 `json:"updated"`
+	Deleted      int                 `json:"deleted"`
+	Entered      int                 `json:"entered"`
+	Left         int                 `json:"left"`
+	FirstNetTick uint32              `json:"first_net_tick"`
+	LastNetTick  uint32              `json:"last_net_tick"`
+	SampleFields []string            `json:"sample_fields"`
+	SampleValues map[string][]string `json:"sample_values"`
+	Transitions  []transition        `json:"transitions"`
 }
 
 type transition struct {
@@ -51,6 +51,9 @@ type transition struct {
 	LifeState      any    `json:"life_state,omitempty"`
 	WaitingToSpawn any    `json:"waiting_to_spawn,omitempty"`
 	Team           any    `json:"team,omitempty"`
+	KillCount      any    `json:"kill_count,omitempty"`
+	LastKillerTeam any    `json:"last_killer_team,omitempty"`
+	RoshanHandle   any    `json:"roshan_handle,omitempty"`
 	X              any    `json:"cell_x,omitempty"`
 	Y              any    `json:"cell_y,omitempty"`
 }
@@ -61,11 +64,12 @@ type output struct {
 }
 
 type stateKey struct {
-	Health         string
-	MaxHealth      string
 	LifeState      string
 	WaitingToSpawn string
 	Team           string
+	KillCount      string
+	LastKillerTeam string
+	RoshanHandle   string
 }
 
 func main() {
@@ -98,8 +102,7 @@ func run() error {
 
 	p.OnEntity(func(e *manta.Entity, op manta.EntityOp) error {
 		className := e.GetClassName()
-		name := resolvedEntityName(p, e)
-		if !possibleRoshan(className, name) {
+		if !isRoshanLifecycleClass(className) {
 			return nil
 		}
 
@@ -107,22 +110,18 @@ func run() error {
 		summary := entities[key]
 		if summary == nil {
 			summary = &entitySummary{
-				Index:              e.GetIndex(),
-				Serial:             e.GetSerial(),
-				ClassName:          className,
-				ResolvedEntityName: name,
-				FirstNetTick:       p.NetTick,
-				LastNetTick:        p.NetTick,
-				SampleFields:       sortedKeys(e.Map()),
-				SampleValues:       map[string][]string{},
-				Transitions:        []transition{},
+				Index:        e.GetIndex(),
+				Serial:       e.GetSerial(),
+				ClassName:    className,
+				FirstNetTick: p.NetTick,
+				LastNetTick:  p.NetTick,
+				SampleFields: sortedKeys(e.Map()),
+				SampleValues: map[string][]string{},
+				Transitions:  []transition{},
 			}
 			entities[key] = summary
 		}
 		summary.LastNetTick = p.NetTick
-		if summary.ResolvedEntityName == "" && name != "" {
-			summary.ResolvedEntityName = name
-		}
 
 		if op.Flag(manta.EntityOpCreated) {
 			summary.Created++
@@ -147,11 +146,12 @@ func run() error {
 		}
 
 		state := stateKey{
-			Health:         valueString(e.Get("m_iHealth")),
-			MaxHealth:      valueString(e.Get("m_iMaxHealth")),
 			LifeState:      valueString(e.Get("m_lifeState")),
 			WaitingToSpawn: valueString(e.Get("m_bIsWaitingToSpawn")),
 			Team:           valueString(e.Get("m_iTeamNum")),
+			KillCount:      valueString(e.Get("m_iKillCount")),
+			LastKillerTeam: valueString(e.Get("m_iLastKillerTeam")),
+			RoshanHandle:   valueString(e.Get("m_hRoshan")),
 		}
 		previous, seen := lastState[key]
 		stateChanged := !seen || state != previous
@@ -165,6 +165,9 @@ func run() error {
 				LifeState:      e.Get("m_lifeState"),
 				WaitingToSpawn: e.Get("m_bIsWaitingToSpawn"),
 				Team:           e.Get("m_iTeamNum"),
+				KillCount:      e.Get("m_iKillCount"),
+				LastKillerTeam: e.Get("m_iLastKillerTeam"),
+				RoshanHandle:   e.Get("m_hRoshan"),
 				X:              e.Get("CBodyComponent.m_cellX"),
 				Y:              e.Get("CBodyComponent.m_cellY"),
 			})
@@ -199,20 +202,8 @@ func run() error {
 	return nil
 }
 
-func possibleRoshan(className, entityName string) bool {
-	return strings.Contains(strings.ToLower(className+" "+entityName), "roshan")
-}
-
-func resolvedEntityName(p *manta.Parser, e *manta.Entity) string {
-	idx, ok := int32Value(e.Get("m_pEntity.m_nameStringTableIndex"))
-	if !ok {
-		return ""
-	}
-	name, found := p.LookupStringByIndex("EntityNames", idx)
-	if !found {
-		return ""
-	}
-	return name
+func isRoshanLifecycleClass(className string) bool {
+	return className == "CDOTA_Unit_Roshan" || className == "CDOTA_RoshanSpawner"
 }
 
 func sortedKeys(values map[string]interface{}) []string {
@@ -241,21 +232,4 @@ func valueString(value any) string {
 		return "<nil>"
 	}
 	return fmt.Sprint(value)
-}
-
-func int32Value(value any) (int32, bool) {
-	switch v := value.(type) {
-	case int32:
-		return v, true
-	case int:
-		return int32(v), true
-	case int64:
-		return int32(v), true
-	case uint32:
-		return int32(v), true
-	case uint64:
-		return int32(v), true
-	default:
-		return 0, false
-	}
 }
