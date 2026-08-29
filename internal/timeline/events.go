@@ -48,6 +48,7 @@ type eventCollector struct {
 	purchases          []rawNamedEvent
 	buybacks           []rawBuybackEvent
 	objectives         []rawObjectiveEvent
+	clock              *replayGameClock
 	wards              *wardCollector
 	roshan             *roshanCollector
 }
@@ -59,17 +60,20 @@ func newEventCollector(p *manta.Parser) *eventCollector {
 		heroNameToSlot:     make(map[string]int),
 		slotToHeroName:     make(map[int]string),
 		resourcePlayerTeam: make(map[int]int),
+		clock:              newReplayGameClock(),
 		wards:              newWardCollector(),
 		roshan:             newRoshanCollector(),
 	}
 
 	// Ward and Roshan-spawner entities are not heroes, so they never reach
-	// Parse's hero-specific entity handler. Register a dedicated replay-fact
-	// listener here; event collectors are installed before parsing begins and
-	// already own the other non-hero replay facts.
+	// Parse's hero-specific entity handler. This listener also owns the shared
+	// pause-aware entity clock so all entity-derived facts stay aligned with
+	// combat-log timestamps across pauses.
 	p.OnEntity(func(e *manta.Entity, op manta.EntityOp) error {
-		c.wards.observe(e, op, float64(p.NetTick)/tickRate)
-		c.roshan.observe(e, p.NetTick)
+		c.clock.observe(e)
+		absoluteTime := c.clock.absoluteTime(p.NetTick)
+		c.wards.observe(e, op, absoluteTime)
+		c.roshan.observe(e, p.NetTick, absoluteTime)
 		return nil
 	})
 
