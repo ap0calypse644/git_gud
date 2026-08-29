@@ -16,6 +16,7 @@ import (
 	"github.com/ap0calypse644/git_gud/internal/coaching"
 	"github.com/ap0calypse644/git_gud/internal/config"
 	"github.com/ap0calypse644/git_gud/internal/opendota"
+	"github.com/ap0calypse644/git_gud/internal/patterns"
 	"github.com/ap0calypse644/git_gud/internal/processor"
 	"github.com/ap0calypse644/git_gud/internal/replay"
 	"github.com/ap0calypse644/git_gud/internal/storage"
@@ -74,7 +75,12 @@ func run() error {
 		coach = coaching.NewReportArtifactWriter(cfg.Storage.Path, reporter)
 	}
 
-	matchProcessor := processor.NewWithCoach(cfg, api, downloader, timelineBuilder, coach, store, logger)
+	var patternRecorder processor.PatternRecorder
+	if cfg.Patterns.Enabled {
+		patternRecorder = patterns.NewStore(cfg.Storage.Path, cfg.Patterns.RecentMatches)
+	}
+
+	matchProcessor := processor.NewWithCoachAndPatterns(cfg, api, downloader, timelineBuilder, coach, patternRecorder, store, logger)
 	watchService := watcher.New(cfg, api, matchProcessor, store, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
