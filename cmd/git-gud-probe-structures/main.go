@@ -9,21 +9,38 @@ import (
 	"strings"
 
 	"github.com/dotabuff/manta"
+	"github.com/dotabuff/manta/dota"
 )
 
+type structureTransition struct {
+	NetTick uint32 `json:"net_tick"`
+	Op      string `json:"op"`
+}
+
 type structureObservation struct {
-	Name      string  `json:"name,omitempty"`
-	ClassName string  `json:"class_name"`
-	Team      int     `json:"team,omitempty"`
-	X         float64 `json:"x,omitempty"`
-	Y         float64 `json:"y,omitempty"`
-	HasXY     bool    `json:"has_xy"`
-	Seen      int     `json:"seen"`
+	Name         string                `json:"name,omitempty"`
+	ClassName    string                `json:"class_name"`
+	Team         int                   `json:"team,omitempty"`
+	X            float64               `json:"x,omitempty"`
+	Y            float64               `json:"y,omitempty"`
+	HasXY        bool                  `json:"has_xy"`
+	Seen         int                   `json:"seen"`
+	FirstNetTick uint32                `json:"first_net_tick"`
+	LastNetTick  uint32                `json:"last_net_tick"`
+	Transitions  []structureTransition `json:"transitions"`
+}
+
+type buildingKill struct {
+	NetTick      uint32 `json:"net_tick"`
+	Target       string `json:"target"`
+	AttackerTeam int    `json:"attacker_team,omitempty"`
+	TargetTeam   int    `json:"target_team,omitempty"`
 }
 
 type output struct {
-	ReplayPath   string                 `json:"replay_path"`
-	Observations []structureObservation `json:"observations"`
+	ReplayPath    string                 `json:"replay_path"`
+	Observations  []structureObservation `json:"observations"`
+	BuildingKills []buildingKill         `json:"building_kills"`
 }
 
 func main() {
@@ -52,7 +69,7 @@ func run() error {
 	}
 
 	observed := map[string]*structureObservation{}
-	p.OnEntity(func(e *manta.Entity, _ manta.EntityOp) error {
+	p.OnEntity(func(e *manta.Entity, op manta.EntityOp) error {
 		className := e.GetClassName()
 		name := ""
 		if idx, ok := int32Value(e.Get("m_pEntity.m_nameStringTableIndex")); ok {
@@ -70,10 +87,14 @@ func run() error {
 		}
 		obs := observed[key]
 		if obs == nil {
-			obs = &structureObservation{Name: name, ClassName: className}
+			obs = &structureObservation{
+				Name: name, ClassName: className, FirstNetTick: p.NetTick,
+				Transitions: []structureTransition{},
+			}
 			observed[key] = obs
 		}
 		obs.Seen++
+		obs.LastNetTick = p.NetTick
 		if team, ok := intValue(e.Get("m_iTeamNum")); ok {
 			obs.Team = team
 		}
@@ -82,6 +103,27 @@ func run() error {
 			obs.Y = y
 			obs.HasXY = true
 		}
+		if op.Flag(manta.EntityOpCreated) || op.Flag(manta.EntityOpDeleted) || op.Flag(manta.EntityOpEntered) || op.Flag(manta.EntityOpLeft) {
+			obs.Transitions = append(obs.Transitions, structureTransition{NetTick: p.NetTick, Op: op.String()})
+		}
+		return nil
+	})
+
+	combatLogName := func(index uint32) string {
+		name, _ := p.LookupStringByIndex("CombatLogNames", int32(index))
+		return name
+	}
+	buildingKills := []buildingKill{}
+	p.Callbacks.OnCMsgDOTACombatLogEntry(func(m *dota.CMsgDOTACombatLogEntry) error {
+		if m.GetType() != dota.DOTA_COMBATLOG_TYPES_DOTA_COMBATLOG_TEAM_BUILDING_KILL {
+			return nil
+		}
+		buildingKills = append(buildingKills, buildingKill{
+			NetTick:      p.NetTick,
+			Target:       combatLogName(m.GetTargetName()),
+			AttackerTeam: int(m.GetAttackerTeam()),
+			TargetTeam:   int(m.GetTargetTeam()),
+		})
 		return nil
 	})
 
@@ -89,7 +131,11 @@ func run() error {
 		return fmt.Errorf("parse replay: %w", err)
 	}
 
-	out := output{ReplayPath: *replayPath, Observations: make([]structureObservation, 0, len(observed))}
+	out := output{
+		ReplayPath:    *replayPath,
+		Observations:  make([]structureObservation, 0, len(observed)),
+		BuildingKills: buildingKills,
+	}
 	for _, obs := range observed {
 		out.Observations = append(out.Observations, *obs)
 	}
