@@ -2,6 +2,7 @@ package detector
 
 import (
 	"sort"
+	"strconv"
 
 	"github.com/ap0calypse644/git_gud/internal/timeline"
 )
@@ -33,9 +34,9 @@ type ObjectiveCandidate struct {
 }
 
 // ObjectiveMissEvidence contains only decision-safe state plus retrospective
-// conversion outcomes. Exact hidden Roshan respawn truth is deliberately not
-// copied from timeline.RoshanPostFightState; only its causal knowledge state is
-// retained here.
+// conversion/power-play outcomes. Exact hidden Roshan respawn truth is
+// deliberately not copied from timeline.RoshanPostFightState; only its causal
+// knowledge state is retained here.
 type ObjectiveMissEvidence struct {
 	FightIndex            int     `json:"fight_index"`
 	FightObservedStartT   float64 `json:"fight_observed_start_t"`
@@ -44,14 +45,18 @@ type ObjectiveMissEvidence struct {
 	WindowEndReason       string  `json:"window_end_reason"`
 	WindowDurationSeconds float64 `json:"window_duration_seconds"`
 
-	TargetInvolved          bool `json:"target_involved"`
-	TargetEndSampleAvailable bool `json:"target_end_sample_available"`
-	TargetAliveAtEnd         bool `json:"target_alive_at_end"`
-	AlliedEndSamplesAvailable int `json:"allied_end_samples_available"`
-	AlliedHeroesAliveAtEnd    int `json:"allied_heroes_alive_at_end"`
-	AlliedDeaths              int `json:"allied_deaths"`
-	EnemyDeaths               int `json:"enemy_deaths"`
-	EnemyDeathAdvantage       int `json:"enemy_death_advantage"`
+	TargetInvolved            bool `json:"target_involved"`
+	TargetEndSampleAvailable  bool `json:"target_end_sample_available"`
+	TargetAliveAtEnd          bool `json:"target_alive_at_end"`
+	AlliedEndSamplesAvailable int  `json:"allied_end_samples_available"`
+	AlliedHeroesAliveAtEnd    int  `json:"allied_heroes_alive_at_end"`
+	AlliedDeaths              int  `json:"allied_deaths"`
+	EnemyDeaths               int  `json:"enemy_deaths"`
+	EnemyDeathAdvantage       int  `json:"enemy_death_advantage"`
+
+	EnemyDeathWindowEndStateAvailable bool  `json:"enemy_death_window_end_state_available"`
+	EnemyDeathVictimSlots             []int `json:"enemy_death_victim_slots"`
+	EnemyDeathsStillDeadAtWindowEnd   int   `json:"enemy_deaths_still_dead_at_window_end"`
 
 	EnemyTier1sDestroyedAtEnd []string `json:"enemy_tier1s_destroyed_at_end"`
 	EnemyMapOpened            bool     `json:"enemy_map_opened"`
@@ -71,12 +76,15 @@ type ObjectiveMissEvidence struct {
 //   - at least one enemy tier-one tower was already down, a conservative
 //     map-state signal that suppresses obvious early-game Roshan noise;
 //   - Roshan was causally knowable as alive (never a hidden random respawn);
-//   - a real non-overlapping post-fight interval existed; and
+//   - a real non-overlapping post-fight interval existed;
+//   - at least one enemy killed in that fight was still dead at the end of the
+//     clean interval, confirming a sustained power-play rather than a momentary
+//     death-count advantage; and
 //   - the target team converted neither Roshan nor a building in that interval.
 //
 // This remains a review candidate rather than a strategic verdict because the
-// detector does not yet model Roshan-pit distance, team damage capability, or
-// travel/path safety.
+// detector does not yet model Roshan damage capability, path safety, buyback
+// intent, or team communication.
 func AnalyzeObjectives(tl *timeline.MatchTimeline) ObjectiveAnalysis {
 	out := ObjectiveAnalysis{Assessments: []ObjectiveAssessment{}, Candidates: []ObjectiveCandidate{}}
 	if tl == nil {
@@ -90,7 +98,7 @@ func AnalyzeObjectives(tl *timeline.MatchTimeline) ObjectiveAnalysis {
 	}
 
 	for _, ctx := range contexts {
-		assessment := assessObjectiveMiss(ctx)
+		assessment := assessObjectiveMiss(tl, ctx)
 		out.Assessments = append(out.Assessments, assessment)
 		if assessment.Candidate {
 			evidence := assessment.Evidence
@@ -118,7 +126,7 @@ func AnalyzeObjectives(tl *timeline.MatchTimeline) ObjectiveAnalysis {
 	return out
 }
 
-func assessObjectiveMiss(ctx timeline.PostFightObjectiveContext) ObjectiveAssessment {
+func assessObjectiveMiss(tl *timeline.MatchTimeline, ctx timeline.PostFightObjectiveContext) ObjectiveAssessment {
 	destroyedT1s := make([]string, 0, 3)
 	for _, state := range ctx.EnemyLaneStructuresAtEnd {
 		if state.Tier1Destroyed {
@@ -127,27 +135,31 @@ func assessObjectiveMiss(ctx timeline.PostFightObjectiveContext) ObjectiveAssess
 	}
 	sort.Strings(destroyedT1s)
 
+	deathStateAvailable, deathSlots, stillDead := enemyDeathStateAtWindowEnd(tl, ctx)
 	evidence := ObjectiveMissEvidence{
-		FightIndex:                    ctx.FightIndex,
-		FightObservedStartT:           ctx.FightObservedStartT,
-		FightObservedEndT:             ctx.FightObservedEndT,
-		WindowEndT:                    ctx.WindowEndT,
-		WindowEndReason:               ctx.WindowEndReason,
-		WindowDurationSeconds:         ctx.WindowDurationSeconds,
-		TargetInvolved:                ctx.TargetInvolved,
-		TargetEndSampleAvailable:      ctx.TargetEndSampleAvailable,
-		TargetAliveAtEnd:              ctx.TargetAliveAtEnd,
-		AlliedEndSamplesAvailable:     ctx.AlliedEndSamplesAvailable,
-		AlliedHeroesAliveAtEnd:        ctx.AlliedHeroesAliveAtEnd,
-		AlliedDeaths:                  ctx.AlliedDeaths,
-		EnemyDeaths:                   ctx.EnemyDeaths,
-		EnemyDeathAdvantage:           ctx.EnemyDeathAdvantage,
-		EnemyTier1sDestroyedAtEnd:     destroyedT1s,
-		EnemyMapOpened:                len(destroyedT1s) > 0,
-		RoshanKnowledgeState:          ctx.RoshanAtEnd.KnowledgeState,
-		RoshanKnownAliveForDecision:   ctx.RoshanAtEnd.KnownAliveForDecision,
-		TargetTeamConversionCount:     len(ctx.TargetTeamConversions),
-		NoTargetTeamConversion:        len(ctx.TargetTeamConversions) == 0,
+		FightIndex:                         ctx.FightIndex,
+		FightObservedStartT:                ctx.FightObservedStartT,
+		FightObservedEndT:                  ctx.FightObservedEndT,
+		WindowEndT:                         ctx.WindowEndT,
+		WindowEndReason:                    ctx.WindowEndReason,
+		WindowDurationSeconds:              ctx.WindowDurationSeconds,
+		TargetInvolved:                     ctx.TargetInvolved,
+		TargetEndSampleAvailable:           ctx.TargetEndSampleAvailable,
+		TargetAliveAtEnd:                   ctx.TargetAliveAtEnd,
+		AlliedEndSamplesAvailable:          ctx.AlliedEndSamplesAvailable,
+		AlliedHeroesAliveAtEnd:             ctx.AlliedHeroesAliveAtEnd,
+		AlliedDeaths:                       ctx.AlliedDeaths,
+		EnemyDeaths:                        ctx.EnemyDeaths,
+		EnemyDeathAdvantage:                ctx.EnemyDeathAdvantage,
+		EnemyDeathWindowEndStateAvailable:  deathStateAvailable,
+		EnemyDeathVictimSlots:              deathSlots,
+		EnemyDeathsStillDeadAtWindowEnd:    stillDead,
+		EnemyTier1sDestroyedAtEnd:          destroyedT1s,
+		EnemyMapOpened:                     len(destroyedT1s) > 0,
+		RoshanKnowledgeState:               ctx.RoshanAtEnd.KnowledgeState,
+		RoshanKnownAliveForDecision:        ctx.RoshanAtEnd.KnownAliveForDecision,
+		TargetTeamConversionCount:          len(ctx.TargetTeamConversions),
+		NoTargetTeamConversion:             len(ctx.TargetTeamConversions) == 0,
 	}
 
 	candidate := ctx.ObservedTimingAvailable &&
@@ -161,6 +173,8 @@ func assessObjectiveMiss(ctx timeline.PostFightObjectiveContext) ObjectiveAssess
 		evidence.EnemyDeathAdvantage > 0 &&
 		evidence.AlliedEndSamplesAvailable == 5 &&
 		evidence.AlliedHeroesAliveAtEnd == 5 &&
+		evidence.EnemyDeathWindowEndStateAvailable &&
+		evidence.EnemyDeathsStillDeadAtWindowEnd > 0 &&
 		evidence.EnemyMapOpened &&
 		evidence.RoshanKnownAliveForDecision &&
 		evidence.NoTargetTeamConversion
@@ -170,5 +184,86 @@ func assessObjectiveMiss(ctx timeline.PostFightObjectiveContext) ObjectiveAssess
 		T:          ctx.FightObservedEndT,
 		Candidate:  candidate,
 		Evidence:   evidence,
+	}
+}
+
+// enemyDeathStateAtWindowEnd uses only enemy deaths inside the attributed
+// fight participant set and hero samples at or before the already-derived
+// window boundary. If attribution/sample coverage is ambiguous, it fails
+// closed instead of manufacturing a power-play signal.
+func enemyDeathStateAtWindowEnd(tl *timeline.MatchTimeline, ctx timeline.PostFightObjectiveContext) (bool, []int, int) {
+	if tl == nil || ctx.EnemyDeaths <= 0 || ctx.WindowEndT < ctx.FightObservedEndT {
+		return false, []int{}, 0
+	}
+
+	participants := make(map[int]bool, len(ctx.Participants))
+	for _, slot := range ctx.Participants {
+		participants[slot] = true
+	}
+	enemyTeam := objectiveOpposingTeam(ctx.TargetTeam)
+	if enemyTeam == 0 {
+		return false, []int{}, 0
+	}
+
+	deathTBySlot := map[int]float64{}
+	matchedDeathEvents := 0
+	for _, event := range tl.Deaths {
+		if event.T < ctx.FightObservedStartT || event.T > ctx.FightObservedEndT || event.VictimSlot == nil {
+			continue
+		}
+		slot := *event.VictimSlot
+		if !participants[slot] {
+			continue
+		}
+		player := tl.Players[strconv.Itoa(slot)]
+		if player == nil || player.Team != enemyTeam {
+			continue
+		}
+		matchedDeathEvents++
+		if previous, ok := deathTBySlot[slot]; !ok || event.T > previous {
+			deathTBySlot[slot] = event.T
+		}
+	}
+	if matchedDeathEvents != ctx.EnemyDeaths || len(deathTBySlot) == 0 {
+		return false, []int{}, 0
+	}
+
+	slots := make([]int, 0, len(deathTBySlot))
+	stillDead := 0
+	for slot, deathT := range deathTBySlot {
+		player := tl.Players[strconv.Itoa(slot)]
+		sample, ok := objectiveHeroSampleAtOrBefore(player, ctx.WindowEndT)
+		if !ok || sample.T < deathT {
+			return false, []int{}, 0
+		}
+		slots = append(slots, slot)
+		if !sample.Alive {
+			stillDead++
+		}
+	}
+	sort.Ints(slots)
+	return true, slots, stillDead
+}
+
+func objectiveHeroSampleAtOrBefore(player *timeline.PlayerTimeline, t float64) (timeline.HeroSample, bool) {
+	if player == nil {
+		return timeline.HeroSample{}, false
+	}
+	for i := len(player.Samples) - 1; i >= 0; i-- {
+		if player.Samples[i].T <= t {
+			return player.Samples[i], true
+		}
+	}
+	return timeline.HeroSample{}, false
+}
+
+func objectiveOpposingTeam(team int) int {
+	switch team {
+	case 2:
+		return 3
+	case 3:
+		return 2
+	default:
+		return 0
 	}
 }
