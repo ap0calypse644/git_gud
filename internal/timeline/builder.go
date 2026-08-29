@@ -41,11 +41,6 @@ func (b *Builder) Build(_ context.Context, match opendota.Match, replayPath stri
 		return "", err
 	}
 
-	laneTowerPositions, err := ExtractLaneTowerPositions(replayPath)
-	if err != nil {
-		return "", fmt.Errorf("extract lane tower positions: %w", err)
-	}
-
 	parsed.Fights = ConsolidateFightWindows(parsed.Fights)
 	if parsed.Visibility.Events == nil {
 		parsed.Visibility.Events = []VisibilityEvent{}
@@ -53,7 +48,7 @@ func (b *Builder) Build(_ context.Context, match opendota.Match, replayPath stri
 	parsed.Knowledge = DeriveKnowledge(&parsed)
 	parsed.LaneStructures = DeriveLaneStructures(&parsed)
 	parsed.TargetWaveTaking = DeriveTargetWaveTaking(&parsed)
-	parsed.TargetWaveDanger = DeriveTargetWaveDangerContext(&parsed, laneTowerPositions)
+	parsed.TargetWaveDanger = DeriveTargetWaveDangerContext(&parsed, parsed.LaneTowerPositions)
 	parsed.TargetDeathContexts = DeriveTargetDeathContexts(&parsed)
 	parsed.TargetFightContexts = DeriveTargetFightContexts(&parsed)
 	return WriteJSON(b.storageRoot, parsed)
