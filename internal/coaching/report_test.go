@@ -13,15 +13,16 @@ func TestBuildMatchCoachingReportDerivesSourceMetadata(t *testing.T) {
 	}
 	modelOutput := modelReportOutput{
 		Summary:    "One important decision overlapped two review signals.",
-		Priorities: []string{"Avoid being unavailable before the next fight."},
+		Priorities: []string{"Disengage earlier from unsupported small engagements."},
 		Moments: []modelCoachingReportMoment{{
-			SourceMomentIndexes: []int{1, 0},
-			Assessment:          "likely_mistake",
-			Title:               "Death before the next fight",
-			DeterministicFacts:  []string{"Two review signals share the same decision window."},
-			Interpretation:      "This likely reduced your ability to contest the following fight.",
-			Alternative:         "Back away earlier and preserve your life for the next engagement.",
-			WhyItMatters:        "Being alive preserves map pressure and fight participation.",
+			SourceMomentIndexes:   []int{1, 0},
+			Assessment:            "likely_mistake",
+			Title:                 "Unsupported death",
+			DecisionTimeFacts:     []string{"No ally was within the configured support radius."},
+			RetrospectiveOutcomes: []string{"A larger fight happened later while the player was dead."},
+			Interpretation:        "The unsupported damage trade was worth reviewing before the death.",
+			Alternative:           "Back away earlier once the trade becomes unfavorable and no ally can connect.",
+			WhyItMatters:          "The later fight shows the cost of being unavailable, without implying it was predictable.",
 		}},
 	}
 
@@ -47,6 +48,9 @@ func TestBuildMatchCoachingReportDerivesSourceMetadata(t *testing.T) {
 	}
 	if len(moment.SourceConfidences) != 2 || moment.SourceConfidences[0] != "low" || moment.SourceConfidences[1] != "medium" {
 		t.Fatalf("source confidences=%v", moment.SourceConfidences)
+	}
+	if len(moment.DecisionTimeFacts) != 1 || len(moment.RetrospectiveOutcomes) != 1 {
+		t.Fatalf("temporal fact split=%#v", moment)
 	}
 }
 
