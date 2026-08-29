@@ -103,7 +103,7 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 					}
 				}
 				if state >= 6 && gameStartSet && !gameEndSet {
-					gameEndTime = float64(p.NetTick) / tickRate
+					gameEndTime = events.clock.absoluteTime(p.NetTick)
 					gameEndSet = true
 				}
 			}
@@ -142,7 +142,7 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 		// replay parsing. M13 reuses the same validated creep callbacks while
 		// retaining observed activation cohorts for lane-wave identity.
 		if gameStartSet && !gameEndSet {
-			matchTime := float64(p.NetTick)/tickRate - gameStartTime
+			matchTime := events.clock.absoluteTime(p.NetTick) - gameStartTime
 			if matchTime >= 0 {
 				creeps.observe(e, op, matchTime)
 			}
@@ -177,7 +177,7 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 			return nil
 		}
 
-		matchTime := float64(p.NetTick)/tickRate - gameStartTime
+		matchTime := events.clock.absoluteTime(p.NetTick) - gameStartTime
 		if matchTime < 0 {
 			return nil
 		}
