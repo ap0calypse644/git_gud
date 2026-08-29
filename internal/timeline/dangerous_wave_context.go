@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	targetWaveDangerMethod              = "causal_wave_taking_structure_support_knowledge_lane_geometry_death_aware_v3"
+	targetWaveDangerMethod              = "causal_wave_taking_structure_support_knowledge_lane_geometry_temporal_v4"
 	targetWaveDangerSampleMaxAgeSeconds = 1.5
 )
 
@@ -40,14 +40,37 @@ type TargetWaveDangerContext struct {
 	LastDepletionT    float64 `json:"last_depletion_t"`
 	ObservedCreepLoss int     `json:"observed_creep_loss"`
 
-	Snapshots []TargetWaveDangerSnapshot `json:"snapshots"`
+	// TargetLaneProgressTrend summarizes movement along the replay-derived lane
+	// polyline. Positive deltas mean movement toward the enemy side; negative
+	// deltas mean movement back toward the friendly side. It is evidence only.
+	TargetLaneProgressTrend TargetWaveDangerProgressTrend `json:"target_lane_progress_trend"`
+	Snapshots               []TargetWaveDangerSnapshot    `json:"snapshots"`
+}
+
+// TargetWaveDangerProgressTrend is a semantic movement summary across the raw
+// M14 exposure and its depletion-bounded primary interval. It is available only
+// when all required target lane-progress anchors are causally available.
+type TargetWaveDangerProgressTrend struct {
+	Available bool `json:"available"`
+
+	ExposureStartWorld  float64 `json:"exposure_start_world"`
+	StartWorld          float64 `json:"start_world"`
+	FirstDepletionWorld float64 `json:"first_depletion_world"`
+	EndWorld            float64 `json:"end_world"`
+	ExposureEndWorld    float64 `json:"exposure_end_world"`
+
+	ExposureStartToStartDeltaWorld       float64 `json:"exposure_start_to_start_delta_world"`
+	StartToFirstDepletionDeltaWorld      float64 `json:"start_to_first_depletion_delta_world"`
+	StartToEndDeltaWorld                 float64 `json:"start_to_end_delta_world"`
+	EndToExposureEndDeltaWorld           float64 `json:"end_to_exposure_end_delta_world"`
+	ExposureStartToExposureEndDeltaWorld float64 `json:"exposure_start_to_exposure_end_delta_world"`
 }
 
 // TargetWaveDangerSnapshot is a causal point-in-time view at a meaningful
 // wave-taking boundary. EnemyKnowledge is obtained only through
 // EnemyKnowledgeAt; actual enemy replay positions are never copied here.
 type TargetWaveDangerSnapshot struct {
-	Kind string  `json:"kind"` // start | first_depletion | last_depletion | end | exposure_end
+	Kind string  `json:"kind"` // exposure_start | start | first_depletion | last_depletion | end | exposure_end
 	T    float64 `json:"t"`
 
 	TargetAvailable bool    `json:"target_available"`
@@ -186,23 +209,22 @@ func DeriveTargetWaveDangerContext(tl *MatchTimeline, towerPositionSets ...[]Lan
 			kind string
 			t    float64
 		}{
+			{kind: "exposure_start", t: period.ExposureStartT},
 			{kind: "start", t: period.StartT},
 			{kind: "first_depletion", t: period.FirstDepletionT},
 			{kind: "last_depletion", t: period.LastDepletionT},
 			{kind: "end", t: period.EndT},
 			{kind: "exposure_end", t: period.ExposureEndT},
 		}
-		seenT := make(map[float64]bool, len(anchors))
+		// Preserve semantic anchors even when several refer to the same timestamp.
+		// The label itself matters for audit and temporal movement summaries.
 		for _, anchor := range anchors {
-			if seenT[anchor.t] {
-				continue
-			}
-			seenT[anchor.t] = true
 			ctx.Snapshots = append(ctx.Snapshots, targetWaveDangerSnapshotAt(
 				tl, target, waves[period.WaveID], lane, period.EnemyTeam,
 				geometry, geometryAvailable, anchor.kind, anchor.t,
 			))
 		}
+		ctx.TargetLaneProgressTrend = targetWaveDangerProgressTrend(ctx.Snapshots)
 		out.Contexts = append(out.Contexts, ctx)
 	}
 
@@ -213,6 +235,41 @@ func DeriveTargetWaveDangerContext(tl *MatchTimeline, towerPositionSets ...[]Lan
 		return out.Contexts[i].WaveID < out.Contexts[j].WaveID
 	})
 	return out
+}
+
+func targetWaveDangerProgressTrend(snapshots []TargetWaveDangerSnapshot) TargetWaveDangerProgressTrend {
+	byKind := make(map[string]TargetWaveDangerSnapshot, len(snapshots))
+	for _, snapshot := range snapshots {
+		byKind[snapshot.Kind] = snapshot
+	}
+
+	requiredKinds := []string{"exposure_start", "start", "first_depletion", "end", "exposure_end"}
+	for _, kind := range requiredKinds {
+		snapshot, ok := byKind[kind]
+		if !ok || !snapshot.LaneProgressAvailable {
+			return TargetWaveDangerProgressTrend{}
+		}
+	}
+
+	exposureStart := byKind["exposure_start"].TargetLaneProgressWorld
+	start := byKind["start"].TargetLaneProgressWorld
+	firstDepletion := byKind["first_depletion"].TargetLaneProgressWorld
+	end := byKind["end"].TargetLaneProgressWorld
+	exposureEnd := byKind["exposure_end"].TargetLaneProgressWorld
+
+	return TargetWaveDangerProgressTrend{
+		Available:                             true,
+		ExposureStartWorld:                    exposureStart,
+		StartWorld:                            start,
+		FirstDepletionWorld:                   firstDepletion,
+		EndWorld:                              end,
+		ExposureEndWorld:                      exposureEnd,
+		ExposureStartToStartDeltaWorld:        start - exposureStart,
+		StartToFirstDepletionDeltaWorld:       firstDepletion - start,
+		StartToEndDeltaWorld:                  end - start,
+		EndToExposureEndDeltaWorld:            exposureEnd - end,
+		ExposureStartToExposureEndDeltaWorld:  exposureEnd - exposureStart,
+	}
 }
 
 func targetWaveDangerSnapshotAt(
