@@ -26,7 +26,7 @@ type PostFightObjectiveContext struct {
 	FightObservedEndT       float64 `json:"fight_observed_end_t,omitempty"`
 	WindowEndT              float64 `json:"window_end_t,omitempty"`
 	WindowEndReason         string  `json:"window_end_reason,omitempty"` // next_fight_start | overlapping_fight_active | match_end
-	WindowDurationSeconds   float64 `json:"window_duration_seconds,omitempty"`
+	WindowDurationSeconds   float64 `json:"window_duration_seconds"`
 
 	TargetTeam      int   `json:"target_team,omitempty"`
 	TargetInvolved  bool  `json:"target_involved"`
@@ -34,10 +34,10 @@ type PostFightObjectiveContext struct {
 	FightDeaths     int   `json:"fight_deaths"`
 	FightHeroDamage int64 `json:"fight_hero_damage"`
 
-	AlliedDeaths         int `json:"allied_deaths"`
-	EnemyDeaths          int `json:"enemy_deaths"`
-	EnemyDeathAdvantage  int `json:"enemy_death_advantage"`
-	UnattributedDeaths   int `json:"unattributed_deaths"`
+	AlliedDeaths        int `json:"allied_deaths"`
+	EnemyDeaths         int `json:"enemy_deaths"`
+	EnemyDeathAdvantage int `json:"enemy_death_advantage"`
+	UnattributedDeaths  int `json:"unattributed_deaths"`
 
 	TargetEndSampleAvailable  bool    `json:"target_end_sample_available"`
 	TargetEndSampleT          float64 `json:"target_end_sample_t,omitempty"`
@@ -272,7 +272,7 @@ func populatePostFightConversions(objectives []ObjectiveEvent, targetTeam int, s
 		if event.T <= startT {
 			continue
 		}
-		if endReason == "next_fight_start" || endReason == "overlapping_fight_active" {
+		if endReason == "next_fight_start" {
 			if event.T >= endT {
 				break
 			}
