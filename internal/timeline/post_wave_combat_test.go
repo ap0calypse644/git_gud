@@ -1,6 +1,9 @@
 package timeline
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
 
 func TestSummarizeTargetPostWaveCombatContextPreEndCombat(t *testing.T) {
 	first := 99.7
@@ -37,7 +40,7 @@ func TestSummarizeTargetPostWaveCombatContextPreEndCombat(t *testing.T) {
 	if got.TargetFirstInvolvementT == nil || *got.TargetFirstInvolvementT != 99.7 {
 		t.Fatalf("first involvement = %#v, want 99.7", got.TargetFirstInvolvementT)
 	}
-	if got.SecondsFromPrimaryEndToFirstInvolvement == nil || *got.SecondsFromPrimaryEndToFirstInvolvement != -0.3 {
+	if got.SecondsFromPrimaryEndToFirstInvolvement == nil || math.Abs(*got.SecondsFromPrimaryEndToFirstInvolvement+0.3) > 1e-9 {
 		t.Fatalf("relative involvement = %#v, want -0.3", got.SecondsFromPrimaryEndToFirstInvolvement)
 	}
 	if got.TargetFirstInvolvementSource != "damage_received" {
@@ -66,7 +69,7 @@ func TestSummarizeTargetPostWaveCombatContextPostEndCombat(t *testing.T) {
 	if !got.TargetCombatStartedDuringPostPrimary {
 		t.Fatal("expected target combat to start during post-primary")
 	}
-	if got.SecondsFromPrimaryEndToFirstInvolvement == nil || *got.SecondsFromPrimaryEndToFirstInvolvement != 0.9 {
+	if got.SecondsFromPrimaryEndToFirstInvolvement == nil || math.Abs(*got.SecondsFromPrimaryEndToFirstInvolvement-0.9) > 1e-9 {
 		t.Fatalf("relative involvement = %#v, want +0.9", got.SecondsFromPrimaryEndToFirstInvolvement)
 	}
 }
