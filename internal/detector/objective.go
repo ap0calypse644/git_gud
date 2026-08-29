@@ -1,13 +1,28 @@
 package detector
 
 import (
+	"math"
 	"sort"
 	"strconv"
 
 	"github.com/ap0calypse644/git_gud/internal/timeline"
 )
 
-const TypeObjectiveMissCandidate = "objective_miss_candidate"
+const (
+	TypeObjectiveMissCandidate = "objective_miss_candidate"
+
+	// Source 2 timeline coordinates use 128 world units per cell.
+	objectiveWorldScale = 128.0
+
+	// Current Dota backdoor mechanics: T2 has an independent 900-world-unit
+	// lane-creep detection radius; base buildings share a 4000-world-unit
+	// Ancient-centered detection radius; protection remains disabled for 15s
+	// after qualifying lane creeps leave/die. These are game mechanics, not
+	// calibration thresholds.
+	objectiveT2BackdoorRadiusWorld   = 900.0
+	objectiveBaseBackdoorRadiusWorld = 4000.0
+	objectiveBackdoorDisableSeconds  = 15.0
+)
 
 // ObjectiveAnalysis keeps an assessment for every post-fight objective context
 // so calibration can inspect both emitted candidates and suppressed cases.
@@ -66,9 +81,10 @@ type ObjectiveMissEvidence struct {
 	EnemyDeathVictimSlots             []int `json:"enemy_death_victim_slots"`
 	EnemyDeathsStillDeadAtWindowEnd   int   `json:"enemy_deaths_still_dead_at_window_end"`
 
-	EnemyTier1sDestroyedAtEnd []string               `json:"enemy_tier1s_destroyed_at_end"`
-	EnemyMapOpened            bool                   `json:"enemy_map_opened"`
-	EnemyFrontTowerOptions    []ObjectiveTowerOption `json:"enemy_front_tower_options"`
+	EnemyTier1sDestroyedAtEnd  []string               `json:"enemy_tier1s_destroyed_at_end"`
+	EnemyMapOpened             bool                   `json:"enemy_map_opened"`
+	EnemyFrontTowerOptions     []ObjectiveTowerOption `json:"enemy_front_tower_options"`
+	EnemyPushableTowerOptions  []ObjectiveTowerOption `json:"enemy_pushable_tower_options"`
 
 	RoshanKnowledgeState        string `json:"roshan_knowledge_state,omitempty"`
 	RoshanKnownAliveForDecision bool   `json:"roshan_known_alive_for_decision"`
@@ -86,9 +102,9 @@ type ObjectiveMissEvidence struct {
 //   - complete five-player allied end-state sampling says all allies were alive;
 //   - at least one enemy tier-one tower was already down, a conservative
 //     map-state signal that suppresses obvious early-game conversion noise;
-//   - at least one objective was causally known to be available: either the
-//     lane-front tower in an opened lane or Roshan known alive without hidden
-//     random-respawn leakage;
+//   - at least one objective was causally supported: Roshan known alive without
+//     hidden random-respawn leakage, an unprotected T1, or a T2/T3 whose
+//     backdoor protection has conservative observed lane-creep disable evidence;
 //   - a real non-overlapping post-fight interval existed;
 //   - at least one enemy killed in that fight was still dead at the end of the
 //     clean interval, confirming a sustained power-play rather than a momentary
@@ -96,8 +112,9 @@ type ObjectiveMissEvidence struct {
 //   - the target team converted neither Roshan nor a building in that interval.
 //
 // This remains a review candidate rather than a strategic verdict because the
-// detector does not model path safety, objective damage capability, buyback
-// intent, wave position, or team communication.
+// detector still does not model path safety, Roshan/tower damage capability,
+// buyback intent, enemy positioning beyond causal knowledge, or team
+// communication.
 func AnalyzeObjectives(tl *timeline.MatchTimeline) ObjectiveAnalysis {
 	out := ObjectiveAnalysis{Assessments: []ObjectiveAssessment{}, Candidates: []ObjectiveCandidate{}}
 	if tl == nil {
@@ -151,15 +168,11 @@ func assessObjectiveMiss(tl *timeline.MatchTimeline, ctx timeline.PostFightObjec
 		}
 	}
 	sort.Strings(destroyedT1s)
-	sort.SliceStable(frontTowers, func(i, j int) bool {
-		if frontTowers[i].Lane == frontTowers[j].Lane {
-			return frontTowers[i].Tier < frontTowers[j].Tier
-		}
-		return frontTowers[i].Lane < frontTowers[j].Lane
-	})
+	sortObjectiveTowerOptions(frontTowers)
 
+	pushableTowers := objectivePushableTowerOptions(tl, ctx, frontTowers)
 	deathStateAvailable, deathSlots, stillDead := enemyDeathStateAtWindowEnd(tl, ctx)
-	knownObjectiveOptionCount := len(frontTowers)
+	knownObjectiveOptionCount := len(pushableTowers)
 	if ctx.RoshanAtEnd.KnownAliveForDecision {
 		knownObjectiveOptionCount++
 	}
@@ -184,6 +197,7 @@ func assessObjectiveMiss(tl *timeline.MatchTimeline, ctx timeline.PostFightObjec
 		EnemyTier1sDestroyedAtEnd:          destroyedT1s,
 		EnemyMapOpened:                     len(destroyedT1s) > 0,
 		EnemyFrontTowerOptions:             frontTowers,
+		EnemyPushableTowerOptions:          pushableTowers,
 		RoshanKnowledgeState:               ctx.RoshanAtEnd.KnowledgeState,
 		RoshanKnownAliveForDecision:        ctx.RoshanAtEnd.KnownAliveForDecision,
 		KnownObjectiveOptionCount:          knownObjectiveOptionCount,
@@ -228,6 +242,104 @@ func objectiveFrontTower(state timeline.LaneStructureState) (ObjectiveTowerOptio
 	default:
 		return ObjectiveTowerOption{}, false
 	}
+}
+
+func sortObjectiveTowerOptions(options []ObjectiveTowerOption) {
+	sort.SliceStable(options, func(i, j int) bool {
+		if options[i].Lane == options[j].Lane {
+			return options[i].Tier < options[j].Tier
+		}
+		return options[i].Lane < options[j].Lane
+	})
+}
+
+// objectivePushableTowerOptions applies only exact Dota backdoor mechanics as a
+// sufficient tower-availability filter. T1 is always unprotected. T2 requires
+// conservative observed friendly lane-creep support inside its independent
+// 900-unit detection radius. T3 uses the shared base backdoor state centered on
+// the enemy Fort/Ancient with the 4000-unit detection radius. Creep evidence in
+// the preceding 15 seconds is accepted because the game keeps protection
+// disabled for that duration after qualifying creeps leave/die.
+func objectivePushableTowerOptions(tl *timeline.MatchTimeline, ctx timeline.PostFightObjectiveContext, front []ObjectiveTowerOption) []ObjectiveTowerOption {
+	out := make([]ObjectiveTowerOption, 0, len(front))
+	if tl == nil {
+		return out
+	}
+	enemyTeam := objectiveOpposingTeam(ctx.TargetTeam)
+	if enemyTeam == 0 {
+		return out
+	}
+
+	windowStart := ctx.FightObservedEndT - objectiveBackdoorDisableSeconds
+	if windowStart < 0 {
+		windowStart = 0
+	}
+	for _, option := range front {
+		switch option.Tier {
+		case 1:
+			out = append(out, option)
+		case 2:
+			x, y, ok := objectiveInitialTowerPosition(tl.LaneStructures, enemyTeam, option.Lane, 2)
+			if ok && objectiveCreepBackdoorSupport(tl.CreepClusters, ctx.TargetTeam, x, y, objectiveT2BackdoorRadiusWorld, windowStart, ctx.WindowEndT) {
+				out = append(out, option)
+			}
+		case 3:
+			x, y, ok := objectiveInitialFortPosition(tl.LaneStructures, enemyTeam)
+			if ok && objectiveCreepBackdoorSupport(tl.CreepClusters, ctx.TargetTeam, x, y, objectiveBaseBackdoorRadiusWorld, windowStart, ctx.WindowEndT) {
+				out = append(out, option)
+			}
+		}
+	}
+	sortObjectiveTowerOptions(out)
+	return out
+}
+
+func objectiveInitialTowerPosition(structures timeline.LaneStructureTimeline, team int, lane string, tier int) (float64, float64, bool) {
+	for _, tower := range structures.InitialTowers {
+		if tower.Team == team && tower.Lane == lane && tower.Tier == tier {
+			return tower.X, tower.Y, true
+		}
+	}
+	return 0, 0, false
+}
+
+func objectiveInitialFortPosition(structures timeline.LaneStructureTimeline, team int) (float64, float64, bool) {
+	for _, fort := range structures.InitialForts {
+		if fort.Team == team {
+			return fort.X, fort.Y, true
+		}
+	}
+	return 0, 0, false
+}
+
+// objectiveCreepBackdoorSupport intentionally uses a sufficient geometric
+// condition rather than estimating individual creep positions from a cluster
+// center. The whole observed same-team lane/siege cluster must fit inside the
+// mechanic radius (center distance + max member spread <= radius). This can
+// miss real support but cannot create support merely because an averaged center
+// happens to fall inside the radius.
+func objectiveCreepBackdoorSupport(clusters timeline.CreepClusterTimeline, team int, x, y, radiusWorld, startT, endT float64) bool {
+	if !clusters.Available || (team != 2 && team != 3) || endT < startT {
+		return false
+	}
+	for _, frame := range clusters.Frames {
+		if frame.T < startT {
+			continue
+		}
+		if frame.T > endT {
+			break
+		}
+		for _, cluster := range frame.Clusters {
+			if cluster.Team != team || cluster.CreepCount <= 0 || cluster.LaneCreepCount+cluster.SiegeCreepCount <= 0 {
+				continue
+			}
+			centerDistanceWorld := math.Hypot(cluster.CenterX-x, cluster.CenterY-y) * objectiveWorldScale
+			if centerDistanceWorld+cluster.MaxMemberDistanceWorld <= radiusWorld {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // enemyDeathStateAtWindowEnd uses only enemy deaths inside the attributed
