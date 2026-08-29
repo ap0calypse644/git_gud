@@ -53,6 +53,12 @@ type Config struct {
 		KeepCompressed  bool     `json:"keep_compressed"`
 		DownloadTimeout Duration `json:"download_timeout"`
 	} `json:"replays"`
+	Coaching struct {
+		Enabled         bool     `json:"enabled"`
+		Model           string   `json:"model"`
+		Timeout         Duration `json:"timeout"`
+		MaxOutputTokens int      `json:"max_output_tokens"`
+	} `json:"coaching"`
 }
 
 func defaults() Config {
@@ -65,6 +71,10 @@ func defaults() Config {
 	cfg.Replays.RetryInterval = Duration(5 * time.Minute)
 	cfg.Replays.RetryFor = Duration(168 * time.Hour)
 	cfg.Replays.DownloadTimeout = Duration(10 * time.Minute)
+	cfg.Coaching.Enabled = true
+	cfg.Coaching.Model = "gpt-5.6-terra"
+	cfg.Coaching.Timeout = Duration(90 * time.Second)
+	cfg.Coaching.MaxOutputTokens = 3000
 	return cfg
 }
 
@@ -118,6 +128,17 @@ func (c Config) Validate() error {
 	}
 	if c.Replays.DownloadTimeout.Duration() <= 0 {
 		errs = append(errs, errors.New("replays.download_timeout must be positive"))
+	}
+	if c.Coaching.Enabled {
+		if strings.TrimSpace(c.Coaching.Model) == "" {
+			errs = append(errs, errors.New("coaching.model must not be empty when coaching is enabled"))
+		}
+		if c.Coaching.Timeout.Duration() <= 0 {
+			errs = append(errs, errors.New("coaching.timeout must be positive when coaching is enabled"))
+		}
+		if c.Coaching.MaxOutputTokens <= 0 {
+			errs = append(errs, errors.New("coaching.max_output_tokens must be positive when coaching is enabled"))
+		}
 	}
 	return errors.Join(errs...)
 }
