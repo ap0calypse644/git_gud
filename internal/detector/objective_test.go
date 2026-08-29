@@ -178,6 +178,39 @@ func TestAssessObjectiveMissRequiresAncientCreepSupportForTier3(t *testing.T) {
 	}
 }
 
+func TestAssessObjectiveMissProtectedTowerRequiresAlliedHeroPresence(t *testing.T) {
+	tl, ctx := baseObjectiveFixture()
+	ctx.RoshanAtEnd.KnownAliveForDecision = false
+	ctx.RoshanAtEnd.KnowledgeState = "known_dead_from_kill"
+	for i := range ctx.EnemyLaneStructuresAtEnd {
+		state := &ctx.EnemyLaneStructuresAtEnd[i]
+		if state.Lane == "mid" {
+			continue
+		}
+		state.Tier1KnownAlive = false
+		state.Tier2KnownAlive = false
+		state.Tier3KnownAlive = false
+	}
+	tl.CreepClusters.Frames = []timeline.CreepClusterFrame{{
+		T: 125,
+		Clusters: []timeline.CreepCluster{{
+			Team: 2, CenterX: 150, CenterY: 150, CreepCount: 4, LaneCreepCount: 4,
+			MaxMemberDistanceWorld: 100,
+		}},
+	}}
+	for i := range tl.Players["0"].Samples {
+		tl.Players["0"].Samples[i].X = 0
+		tl.Players["0"].Samples[i].Y = 0
+	}
+	assessment := assessObjectiveMiss(tl, ctx)
+	if assessment.Candidate {
+		t.Fatalf("creeps-only protected objective emitted candidate: %#v", assessment)
+	}
+	if len(assessment.Evidence.EnemyPushableTowerOptions) != 0 {
+		t.Fatalf("creeps-only protected objective marked pushable: %#v", assessment.Evidence.EnemyPushableTowerOptions)
+	}
+}
+
 func TestObjectiveCreepBackdoorSupportFailsClosedOnClusterSpread(t *testing.T) {
 	clusters := timeline.CreepClusterTimeline{
 		Available: true,
@@ -252,7 +285,10 @@ func baseObjectiveFixture() (*timeline.MatchTimeline, timeline.PostFightObjectiv
 			"0": {
 				PlayerSlot: 0,
 				Team:       2,
-				Samples:    []timeline.HeroSample{{T: 119, Alive: true}, {T: 159, Alive: true}},
+				Samples: []timeline.HeroSample{
+					{T: 119, X: 150, Y: 150, Alive: true},
+					{T: 159, X: 150, Y: 150, Alive: true},
+				},
 			},
 			"128": {
 				PlayerSlot: 128,
@@ -283,6 +319,7 @@ func baseObjectiveFixture() (*timeline.MatchTimeline, timeline.PostFightObjectiv
 		ObservedTimingAvailable:   true,
 		FightObservedStartT:       100,
 		FightObservedEndT:         120,
+		WindowStartT:              120,
 		WindowEndT:                160,
 		WindowEndReason:           "next_fight_start",
 		WindowDurationSeconds:     40,
