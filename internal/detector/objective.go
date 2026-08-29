@@ -64,6 +64,7 @@ type ObjectiveMissEvidence struct {
 	FightIndex            int     `json:"fight_index"`
 	FightObservedStartT   float64 `json:"fight_observed_start_t"`
 	FightObservedEndT     float64 `json:"fight_observed_end_t"`
+	WindowStartT          float64 `json:"window_start_t"`
 	WindowEndT            float64 `json:"window_end_t"`
 	WindowEndReason       string  `json:"window_end_reason"`
 	WindowDurationSeconds float64 `json:"window_duration_seconds"`
@@ -81,10 +82,10 @@ type ObjectiveMissEvidence struct {
 	EnemyDeathVictimSlots             []int `json:"enemy_death_victim_slots"`
 	EnemyDeathsStillDeadAtWindowEnd   int   `json:"enemy_deaths_still_dead_at_window_end"`
 
-	EnemyTier1sDestroyedAtEnd  []string               `json:"enemy_tier1s_destroyed_at_end"`
-	EnemyMapOpened             bool                   `json:"enemy_map_opened"`
-	EnemyFrontTowerOptions     []ObjectiveTowerOption `json:"enemy_front_tower_options"`
-	EnemyPushableTowerOptions  []ObjectiveTowerOption `json:"enemy_pushable_tower_options"`
+	EnemyTier1sDestroyedAtEnd []string               `json:"enemy_tier1s_destroyed_at_end"`
+	EnemyMapOpened            bool                   `json:"enemy_map_opened"`
+	EnemyFrontTowerOptions    []ObjectiveTowerOption `json:"enemy_front_tower_options"`
+	EnemyPushableTowerOptions []ObjectiveTowerOption `json:"enemy_pushable_tower_options"`
 
 	RoshanKnowledgeState        string `json:"roshan_knowledge_state,omitempty"`
 	RoshanKnownAliveForDecision bool   `json:"roshan_known_alive_for_decision"`
@@ -103,8 +104,10 @@ type ObjectiveMissEvidence struct {
 //   - at least one enemy tier-one tower was already down, a conservative
 //     map-state signal that suppresses obvious early-game conversion noise;
 //   - at least one objective was causally supported: Roshan known alive without
-//     hidden random-respawn leakage, an unprotected T1, or a T2/T3 whose
-//     backdoor protection has conservative observed lane-creep disable evidence;
+//     hidden random-respawn leakage, an unprotected T1, or a protected T2/T3
+//     with both conservative backdoor-disable creep evidence and an allied hero
+//     observed inside that same mechanic-defined objective region during the
+//     clean post-fight interval;
 //   - a real non-overlapping post-fight interval existed;
 //   - at least one enemy killed in that fight was still dead at the end of the
 //     clean interval, confirming a sustained power-play rather than a momentary
@@ -177,33 +180,34 @@ func assessObjectiveMiss(tl *timeline.MatchTimeline, ctx timeline.PostFightObjec
 		knownObjectiveOptionCount++
 	}
 	evidence := ObjectiveMissEvidence{
-		FightIndex:                         ctx.FightIndex,
-		FightObservedStartT:                ctx.FightObservedStartT,
-		FightObservedEndT:                  ctx.FightObservedEndT,
-		WindowEndT:                         ctx.WindowEndT,
-		WindowEndReason:                    ctx.WindowEndReason,
-		WindowDurationSeconds:              ctx.WindowDurationSeconds,
-		TargetInvolved:                     ctx.TargetInvolved,
-		TargetEndSampleAvailable:           ctx.TargetEndSampleAvailable,
-		TargetAliveAtEnd:                   ctx.TargetAliveAtEnd,
-		AlliedEndSamplesAvailable:          ctx.AlliedEndSamplesAvailable,
-		AlliedHeroesAliveAtEnd:             ctx.AlliedHeroesAliveAtEnd,
-		AlliedDeaths:                       ctx.AlliedDeaths,
-		EnemyDeaths:                        ctx.EnemyDeaths,
-		EnemyDeathAdvantage:                ctx.EnemyDeathAdvantage,
-		EnemyDeathWindowEndStateAvailable:  deathStateAvailable,
-		EnemyDeathVictimSlots:              deathSlots,
-		EnemyDeathsStillDeadAtWindowEnd:    stillDead,
-		EnemyTier1sDestroyedAtEnd:          destroyedT1s,
-		EnemyMapOpened:                     len(destroyedT1s) > 0,
-		EnemyFrontTowerOptions:             frontTowers,
-		EnemyPushableTowerOptions:          pushableTowers,
-		RoshanKnowledgeState:               ctx.RoshanAtEnd.KnowledgeState,
-		RoshanKnownAliveForDecision:        ctx.RoshanAtEnd.KnownAliveForDecision,
-		KnownObjectiveOptionCount:          knownObjectiveOptionCount,
-		KnownObjectiveOptions:              knownObjectiveOptionCount > 0,
-		TargetTeamConversionCount:          len(ctx.TargetTeamConversions),
-		NoTargetTeamConversion:             len(ctx.TargetTeamConversions) == 0,
+		FightIndex:                        ctx.FightIndex,
+		FightObservedStartT:               ctx.FightObservedStartT,
+		FightObservedEndT:                 ctx.FightObservedEndT,
+		WindowStartT:                      ctx.WindowStartT,
+		WindowEndT:                        ctx.WindowEndT,
+		WindowEndReason:                   ctx.WindowEndReason,
+		WindowDurationSeconds:             ctx.WindowDurationSeconds,
+		TargetInvolved:                    ctx.TargetInvolved,
+		TargetEndSampleAvailable:          ctx.TargetEndSampleAvailable,
+		TargetAliveAtEnd:                  ctx.TargetAliveAtEnd,
+		AlliedEndSamplesAvailable:         ctx.AlliedEndSamplesAvailable,
+		AlliedHeroesAliveAtEnd:            ctx.AlliedHeroesAliveAtEnd,
+		AlliedDeaths:                      ctx.AlliedDeaths,
+		EnemyDeaths:                       ctx.EnemyDeaths,
+		EnemyDeathAdvantage:               ctx.EnemyDeathAdvantage,
+		EnemyDeathWindowEndStateAvailable: deathStateAvailable,
+		EnemyDeathVictimSlots:             deathSlots,
+		EnemyDeathsStillDeadAtWindowEnd:   stillDead,
+		EnemyTier1sDestroyedAtEnd:         destroyedT1s,
+		EnemyMapOpened:                    len(destroyedT1s) > 0,
+		EnemyFrontTowerOptions:            frontTowers,
+		EnemyPushableTowerOptions:         pushableTowers,
+		RoshanKnowledgeState:              ctx.RoshanAtEnd.KnowledgeState,
+		RoshanKnownAliveForDecision:       ctx.RoshanAtEnd.KnownAliveForDecision,
+		KnownObjectiveOptionCount:         knownObjectiveOptionCount,
+		KnownObjectiveOptions:             knownObjectiveOptionCount > 0,
+		TargetTeamConversionCount:         len(ctx.TargetTeamConversions),
+		NoTargetTeamConversion:            len(ctx.TargetTeamConversions) == 0,
 	}
 
 	candidate := ctx.ObservedTimingAvailable &&
@@ -253,13 +257,14 @@ func sortObjectiveTowerOptions(options []ObjectiveTowerOption) {
 	})
 }
 
-// objectivePushableTowerOptions applies only exact Dota backdoor mechanics as a
+// objectivePushableTowerOptions applies exact Dota backdoor mechanics as a
 // sufficient tower-availability filter. T1 is always unprotected. T2 requires
-// conservative observed friendly lane-creep support inside its independent
-// 900-unit detection radius. T3 uses the shared base backdoor state centered on
-// the enemy Fort/Ancient with the 4000-unit detection radius. Creep evidence in
-// the preceding 15 seconds is accepted because the game keeps protection
-// disabled for that duration after qualifying creeps leave/die.
+// conservative friendly lane-creep support and an allied hero inside its
+// independent 900-unit detection region during the clean post-fight interval.
+// T3 uses the shared base state centered on the enemy Fort/Ancient and requires
+// both creep support and allied hero presence inside that 4000-unit region.
+// Creep evidence in the preceding 15 seconds is accepted because the game keeps
+// protection disabled for that duration after qualifying creeps leave/die.
 func objectivePushableTowerOptions(tl *timeline.MatchTimeline, ctx timeline.PostFightObjectiveContext, front []ObjectiveTowerOption) []ObjectiveTowerOption {
 	out := make([]ObjectiveTowerOption, 0, len(front))
 	if tl == nil {
@@ -270,9 +275,13 @@ func objectivePushableTowerOptions(tl *timeline.MatchTimeline, ctx timeline.Post
 		return out
 	}
 
-	windowStart := ctx.FightObservedEndT - objectiveBackdoorDisableSeconds
-	if windowStart < 0 {
-		windowStart = 0
+	creepWindowStart := ctx.FightObservedEndT - objectiveBackdoorDisableSeconds
+	if creepWindowStart < 0 {
+		creepWindowStart = 0
+	}
+	heroWindowStart := ctx.WindowStartT
+	if heroWindowStart < ctx.FightObservedEndT {
+		heroWindowStart = ctx.FightObservedEndT
 	}
 	for _, option := range front {
 		switch option.Tier {
@@ -280,12 +289,16 @@ func objectivePushableTowerOptions(tl *timeline.MatchTimeline, ctx timeline.Post
 			out = append(out, option)
 		case 2:
 			x, y, ok := objectiveInitialTowerPosition(tl.LaneStructures, enemyTeam, option.Lane, 2)
-			if ok && objectiveCreepBackdoorSupport(tl.CreepClusters, ctx.TargetTeam, x, y, objectiveT2BackdoorRadiusWorld, windowStart, ctx.WindowEndT) {
+			if ok &&
+				objectiveCreepBackdoorSupport(tl.CreepClusters, ctx.TargetTeam, x, y, objectiveT2BackdoorRadiusWorld, creepWindowStart, ctx.WindowEndT) &&
+				objectiveAlliedHeroPresence(tl, ctx.TargetTeam, x, y, objectiveT2BackdoorRadiusWorld, heroWindowStart, ctx.WindowEndT) {
 				out = append(out, option)
 			}
 		case 3:
 			x, y, ok := objectiveInitialFortPosition(tl.LaneStructures, enemyTeam)
-			if ok && objectiveCreepBackdoorSupport(tl.CreepClusters, ctx.TargetTeam, x, y, objectiveBaseBackdoorRadiusWorld, windowStart, ctx.WindowEndT) {
+			if ok &&
+				objectiveCreepBackdoorSupport(tl.CreepClusters, ctx.TargetTeam, x, y, objectiveBaseBackdoorRadiusWorld, creepWindowStart, ctx.WindowEndT) &&
+				objectiveAlliedHeroPresence(tl, ctx.TargetTeam, x, y, objectiveBaseBackdoorRadiusWorld, heroWindowStart, ctx.WindowEndT) {
 				out = append(out, option)
 			}
 		}
@@ -335,6 +348,35 @@ func objectiveCreepBackdoorSupport(clusters timeline.CreepClusterTimeline, team 
 			}
 			centerDistanceWorld := math.Hypot(cluster.CenterX-x, cluster.CenterY-y) * objectiveWorldScale
 			if centerDistanceWorld+cluster.MaxMemberDistanceWorld <= radiusWorld {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// objectiveAlliedHeroPresence uses only allied hero positions, which are
+// player-known. The radius is the same mechanic-defined backdoor region used by
+// the protected objective; no separate coaching-distance threshold is added.
+func objectiveAlliedHeroPresence(tl *timeline.MatchTimeline, team int, x, y, radiusWorld, startT, endT float64) bool {
+	if tl == nil || (team != 2 && team != 3) || endT < startT {
+		return false
+	}
+	for _, player := range tl.Players {
+		if player == nil || player.Team != team {
+			continue
+		}
+		for _, sample := range player.Samples {
+			if sample.T < startT {
+				continue
+			}
+			if sample.T > endT {
+				break
+			}
+			if !sample.Alive {
+				continue
+			}
+			if math.Hypot(sample.X-x, sample.Y-y)*objectiveWorldScale <= radiusWorld {
 				return true
 			}
 		}
