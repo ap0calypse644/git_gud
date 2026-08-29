@@ -30,5 +30,9 @@
     "model": "gpt-5.6-terra",
     "timeout": "90s",
     "max_output_tokens": 3000
+  },
+  "patterns": {
+    "enabled": true,
+    "recent_matches": 20
   }
 }
