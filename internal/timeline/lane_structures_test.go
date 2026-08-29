@@ -8,6 +8,7 @@ func TestDeriveLaneStructuresNormalizesLaneTowerKills(t *testing.T) {
 			{Team: 2, Lane: "bottom", Tier: 1, X: 80, Y: 80, RawName: "dota_goodguys_tower1_bot"},
 			{Team: 3, Lane: "mid", Tier: 2, X: 140, Y: 140, RawName: "dota_badguys_tower2_mid"},
 			{Team: 3, Lane: "top", Tier: 3, X: 160, Y: 170, RawName: "dota_badguys_tower3_top"},
+			{Team: 3, Lane: "base", Tier: 0, X: 171, Y: 167, RawName: "dota_badguys_fort"},
 		},
 		Objectives: []ObjectiveEvent{
 			{T: 100, Type: "building_kill", Target: "npc_dota_goodguys_tower1_bot", TargetTeam: 2},
@@ -22,6 +23,9 @@ func TestDeriveLaneStructuresNormalizesLaneTowerKills(t *testing.T) {
 	}
 	if got.InitialLaneTowersObserved != 3 || len(got.InitialTowers) != 3 {
 		t.Fatalf("unexpected initial tower evidence: %+v", got.InitialTowers)
+	}
+	if got.InitialFortsObserved != 1 || len(got.InitialForts) != 1 || got.InitialForts[0].Team != 3 || got.InitialForts[0].X != 171 || got.InitialForts[0].Y != 167 {
+		t.Fatalf("unexpected initial fort evidence: %+v", got.InitialForts)
 	}
 	if got.BuildingKillsObserved != 3 || got.LaneTowerKillsAccepted != 3 {
 		t.Fatalf("unexpected counts: %+v", got)
