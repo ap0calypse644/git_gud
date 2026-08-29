@@ -9,9 +9,10 @@ import (
 	"github.com/dotabuff/manta"
 )
 
-// LaneTowerPosition is one replay-observed static lane-tower coordinate. Only
-// T1-T3 lane towers are retained; T4, barracks and forts are outside this
-// geometry model.
+// LaneTowerPosition is one replay-observed static lane-structure coordinate.
+// T1-T3 lane towers use their normal lane/tier values. The two public-map Fort
+// entities are also retained as Lane="base", Tier=0 so later objective logic
+// can use exact Ancient-centered backdoor geometry without a second replay pass.
 type LaneTowerPosition struct {
 	Team    int     `json:"team"`
 	Lane    string  `json:"lane"`
@@ -21,16 +22,17 @@ type LaneTowerPosition struct {
 	RawName string  `json:"raw_name"`
 }
 
-// observeLaneTowerPosition records one static T1-T3 lane tower when the replay
-// entity exposes a resolvable EntityNames entry and position. The callback is
-// shared by the main parser and the standalone structure probe so production
-// parsing does not need a second replay pass.
+// observeLaneTowerPosition records one static T1-T3 lane tower or Fort when the
+// replay entity exposes a resolvable EntityNames entry and position. The
+// callback is shared by the main parser and standalone structure probe so
+// production parsing does not need a second replay pass.
 func observeLaneTowerPosition(
 	e *manta.Entity,
 	lookupEntityName func(int32) (string, bool),
 	observed map[[3]int]LaneTowerPosition,
 ) {
-	if e.GetClassName() != "CDOTA_BaseNPC_Tower" {
+	className := e.GetClassName()
+	if className != "CDOTA_BaseNPC_Tower" && className != "CDOTA_BaseNPC_Fort" {
 		return
 	}
 	idx, ok := numberInt(e.Get("m_pEntity.m_nameStringTableIndex"))
@@ -41,16 +43,34 @@ func observeLaneTowerPosition(
 	if !found || name == "" {
 		return
 	}
-	team, lane, tier, isLaneTower, malformed := parseLaneTowerEntityName(name)
-	if malformed || !isLaneTower {
-		return
+
+	var team, tier int
+	var lane string
+	if className == "CDOTA_BaseNPC_Fort" {
+		team, ok = parseFortEntityName(name)
+		if !ok {
+			return
+		}
+		lane = "base"
+		tier = 0
+	} else {
+		var isLaneTower, malformed bool
+		team, lane, tier, isLaneTower, malformed = parseLaneTowerEntityName(name)
+		if malformed || !isLaneTower {
+			return
+		}
 	}
+
 	x, xOK := cellPosition(e, "CBodyComponent.m_cellX", "CBodyComponent.m_vecX")
 	y, yOK := cellPosition(e, "CBodyComponent.m_cellY", "CBodyComponent.m_vecY")
 	if !xOK || !yOK {
 		return
 	}
-	key := [3]int{team, laneOrder(lane), tier}
+	laneKey := laneOrder(lane)
+	if lane == "base" {
+		laneKey = -1
+	}
+	key := [3]int{team, laneKey, tier}
 	if _, exists := observed[key]; exists {
 		return
 	}
@@ -68,6 +88,12 @@ func finalizeLaneTowerPositions(observed map[[3]int]LaneTowerPosition) []LaneTow
 		if out[i].Team != out[j].Team {
 			return out[i].Team < out[j].Team
 		}
+		if out[i].Lane == "base" || out[j].Lane == "base" {
+			if out[i].Lane != out[j].Lane {
+				return out[i].Lane != "base"
+			}
+			return out[i].Tier < out[j].Tier
+		}
 		if out[i].Lane != out[j].Lane {
 			return laneOrder(out[i].Lane) < laneOrder(out[j].Lane)
 		}
@@ -78,7 +104,8 @@ func finalizeLaneTowerPositions(observed map[[3]int]LaneTowerPosition) []LaneTow
 
 // ExtractLaneTowerPositions is retained for the standalone probe/debug path.
 // Production timeline building observes the same entities during Parse instead
-// of reparsing the replay solely for static tower coordinates.
+// of reparsing the replay solely for static structure coordinates. The returned
+// slice also includes the two Fort entries used by objective backdoor logic.
 func ExtractLaneTowerPositions(replayPath string) ([]LaneTowerPosition, error) {
 	f, err := os.Open(replayPath)
 	if err != nil {
@@ -112,4 +139,15 @@ func parseLaneTowerEntityName(name string) (team int, lane string, tier int, isL
 		name = "npc_" + name
 	}
 	return parseLaneTowerTarget(name)
+}
+
+func parseFortEntityName(name string) (int, bool) {
+	switch strings.TrimSpace(name) {
+	case "dota_goodguys_fort", "npc_dota_goodguys_fort":
+		return 2, true
+	case "dota_badguys_fort", "npc_dota_badguys_fort":
+		return 3, true
+	default:
+		return 0, false
+	}
 }

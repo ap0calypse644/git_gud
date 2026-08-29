@@ -19,7 +19,7 @@ func main() {
 
 func run() error {
 	timelinePath := flag.String("timeline", "", "path to an existing timeline JSON")
-	analysis := flag.String("analysis", "deaths", "analysis to run: deaths | fights | waves | all")
+	analysis := flag.String("analysis", "deaths", "analysis to run: deaths | fights | waves | objectives | all")
 	flag.Parse()
 	if *timelinePath == "" {
 		return fmt.Errorf("-timeline is required")
@@ -47,18 +47,22 @@ func run() error {
 		output = detector.AnalyzeFights(&tl)
 	case "waves":
 		output = detector.AnalyzePostWaves(&tl)
+	case "objectives":
+		output = detector.AnalyzeObjectives(&tl)
 	case "all":
 		output = struct {
-			Deaths detector.Analysis          `json:"deaths"`
-			Fights detector.FightAnalysis     `json:"fights"`
-			Waves  detector.PostWaveAnalysis  `json:"waves"`
+			Deaths     detector.Analysis         `json:"deaths"`
+			Fights     detector.FightAnalysis    `json:"fights"`
+			Waves      detector.PostWaveAnalysis `json:"waves"`
+			Objectives detector.ObjectiveAnalysis `json:"objectives"`
 		}{
-			Deaths: detector.AnalyzeDeaths(&tl),
-			Fights: detector.AnalyzeFights(&tl),
-			Waves:  detector.AnalyzePostWaves(&tl),
+			Deaths:     detector.AnalyzeDeaths(&tl),
+			Fights:     detector.AnalyzeFights(&tl),
+			Waves:      detector.AnalyzePostWaves(&tl),
+			Objectives: detector.AnalyzeObjectives(&tl),
 		}
 	default:
-		return fmt.Errorf("invalid -analysis %q: want deaths, fights, waves, or all", *analysis)
+		return fmt.Errorf("invalid -analysis %q: want deaths, fights, waves, objectives, or all", *analysis)
 	}
 
 	if err := enc.Encode(output); err != nil {
