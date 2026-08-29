@@ -63,6 +63,17 @@ func (f *fakeCoach) Generate(_ context.Context, input coaching.MatchCoachingInpu
 	return f.path, f.err
 }
 
+type fakePatternRecorder struct {
+	calls []coaching.MatchCoachingInput
+	path  string
+	err   error
+}
+
+func (f *fakePatternRecorder) Record(input coaching.MatchCoachingInput) (string, error) {
+	f.calls = append(f.calls, input)
+	return f.path, f.err
+}
+
 func testConfig() config.Config {
 	cfg := config.Config{}
 	cfg.Player.AccountID = 256161923
@@ -218,6 +229,127 @@ func TestProcessCoachingFailureKeepsTimelineReady(t *testing.T) {
 	}
 	if match.ReportPath != "" || match.LastError != "temporary provider failure" {
 		t.Fatalf("failed coaching state=%#v", match)
+	}
+}
+
+func TestProcessRecordsPatternsBeforeCoaching(t *testing.T) {
+	cfg := testConfig()
+	root := t.TempDir()
+	store := storage.New(filepath.Join(root, "state.json"))
+	timelinePath := writeTimelineFixture(t, root, 46)
+	state := storage.NewState()
+	state.Initialized = true
+	state.LastSeenMatchID = 100
+	state.Put(&storage.MatchState{MatchID: 46, Status: storage.StatusTimelineReady, TimelinePath: timelinePath})
+	if err := store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+
+	patterns := &fakePatternRecorder{path: filepath.Join(root, "patterns.json")}
+	coach := &fakeCoach{path: filepath.Join(root, "reports", "46.json")}
+	svc := NewWithCoachAndPatterns(cfg, &fakeAPI{matches: map[int64]opendota.Match{}}, &fakeAcquirer{}, &fakeTimelineBuilder{}, coach, patterns, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	result, err := svc.Process(context.Background(), 46, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != storage.StatusCoachingReady {
+		t.Fatalf("result=%#v", result)
+	}
+	if len(patterns.calls) != 1 || patterns.calls[0].MatchID != 46 {
+		t.Fatalf("pattern calls=%#v", patterns.calls)
+	}
+	if len(coach.calls) != 1 || coach.calls[0].MatchID != 46 {
+		t.Fatalf("coach calls=%#v", coach.calls)
+	}
+
+	got, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	match := got.Match(46)
+	if match == nil || !match.PatternRecorded || match.Status != storage.StatusCoachingReady {
+		t.Fatalf("match state=%#v", match)
+	}
+	if got.LastSeenMatchID != 100 {
+		t.Fatalf("pattern recording changed watcher baseline: got %d want 100", got.LastSeenMatchID)
+	}
+}
+
+func TestProcessBackfillsPatternsForCoachingReadyMatchWithoutAI(t *testing.T) {
+	cfg := testConfig()
+	root := t.TempDir()
+	store := storage.New(filepath.Join(root, "state.json"))
+	timelinePath := writeTimelineFixture(t, root, 47)
+	state := storage.NewState()
+	state.Initialized = true
+	state.LastSeenMatchID = 100
+	state.Put(&storage.MatchState{
+		MatchID:      47,
+		Status:       storage.StatusCoachingReady,
+		TimelinePath: timelinePath,
+		ReportPath:   filepath.Join(root, "reports", "47.json"),
+	})
+	if err := store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+
+	api := &fakeAPI{matches: map[int64]opendota.Match{}}
+	acquirer := &fakeAcquirer{}
+	timelineBuilder := &fakeTimelineBuilder{}
+	patterns := &fakePatternRecorder{path: filepath.Join(root, "patterns.json")}
+	svc := NewWithCoachAndPatterns(cfg, api, acquirer, timelineBuilder, nil, patterns, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	result, err := svc.Process(context.Background(), 47, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != storage.StatusCoachingReady || len(patterns.calls) != 1 || patterns.calls[0].MatchID != 47 {
+		t.Fatalf("result=%#v patterns=%#v", result, patterns.calls)
+	}
+	if len(api.matchCalls) != 0 || len(acquirer.calls) != 0 || len(timelineBuilder.calls) != 0 {
+		t.Fatalf("backfill repeated upstream work: api=%v acquire=%v timeline=%v", api.matchCalls, acquirer.calls, timelineBuilder.calls)
+	}
+
+	got, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if match := got.Match(47); match == nil || !match.PatternRecorded || match.Status != storage.StatusCoachingReady {
+		t.Fatalf("match state=%#v", match)
+	}
+	if got.LastSeenMatchID != 100 {
+		t.Fatalf("backfill changed watcher baseline: got %d want 100", got.LastSeenMatchID)
+	}
+}
+
+func TestProcessPatternFailureLeavesMatchRetryable(t *testing.T) {
+	cfg := testConfig()
+	root := t.TempDir()
+	store := storage.New(filepath.Join(root, "state.json"))
+	timelinePath := writeTimelineFixture(t, root, 48)
+	state := storage.NewState()
+	state.Put(&storage.MatchState{MatchID: 48, Status: storage.StatusCoachingReady, TimelinePath: timelinePath})
+	if err := store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+
+	patterns := &fakePatternRecorder{err: errors.New("pattern disk failure")}
+	svc := NewWithCoachAndPatterns(cfg, &fakeAPI{matches: map[int64]opendota.Match{}}, &fakeAcquirer{}, &fakeTimelineBuilder{}, nil, patterns, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, err := svc.Process(context.Background(), 48, false); err == nil {
+		t.Fatal("pattern failure unexpectedly succeeded")
+	}
+
+	got, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	match := got.Match(48)
+	if match == nil || match.Status != storage.StatusCoachingReady || match.PatternRecorded {
+		t.Fatalf("match state=%#v", match)
+	}
+	if match.LastError != "pattern disk failure" {
+		t.Fatalf("last error=%q", match.LastError)
 	}
 }
 
