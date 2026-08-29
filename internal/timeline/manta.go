@@ -61,6 +61,7 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 	events := newEventCollector(p)
 	visibility := newVisibilityCollector()
 	creeps := newCreepCollector()
+	laneTowerPositions := make(map[[3]int]LaneTowerPosition)
 
 	combatLogName := func(index uint32) string {
 		name, _ := p.LookupStringByIndex("CombatLogNames", int32(index))
@@ -88,6 +89,10 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 
 	p.OnEntity(func(e *manta.Entity, op manta.EntityOp) error {
 		className := e.GetClassName()
+
+		observeLaneTowerPosition(e, func(index int32) (string, bool) {
+			return p.LookupStringByIndex("EntityNames", index)
+		}, laneTowerPositions)
 
 		if className == "CDOTAGamerulesProxy" {
 			if state, ok := numberInt(e.Get("m_pGameRules.m_nGameState")); ok {
@@ -235,6 +240,7 @@ func Parse(r io.Reader, opts ParseOptions) (MatchTimeline, error) {
 		return MatchTimeline{}, fmt.Errorf("parse replay: %w", err)
 	}
 	out.GameBuild = p.GameBuild
+	out.LaneTowerPositions = finalizeLaneTowerPositions(laneTowerPositions)
 
 	if !gameStartSet {
 		return MatchTimeline{}, fmt.Errorf("replay did not expose game start time")

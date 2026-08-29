@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	targetWaveTakingMethod                  = "enemy_lane_wave_proximity_and_depletion_bounded_v2"
+	targetWaveTakingMethod                  = "enemy_lane_wave_proximity_and_depletion_death_aware_v3"
 	targetWaveTakingProximityRadiusWorld    = 1600.0
 	targetWaveTakingProximityRadiusTimeline = targetWaveTakingProximityRadiusWorld / 128.0
 	targetWaveTakingSampleMaxAgeSeconds     = 1.5
@@ -93,11 +93,12 @@ type targetWaveContact struct {
 	creepCount    int
 }
 
-// DeriveTargetWaveTaking uses only the target's causal hero samples and M13's
-// reconstructed enemy lane-wave samples. Friendly waves are ignored. A raw
-// exposure must contain at least three consecutive proximity samples and at
-// least one creep-count decrease. Accepted output is then trimmed around the
-// observed depletion activity while retaining the raw exposure bounds.
+// DeriveTargetWaveTaking uses only the target's causal hero samples, exact
+// replay death events, and M13's reconstructed enemy lane-wave samples.
+// Friendly waves are ignored. A raw exposure must contain at least three
+// consecutive proximity samples and at least one creep-count decrease.
+// Accepted output is then trimmed around the observed depletion activity while
+// retaining the raw exposure bounds.
 func DeriveTargetWaveTaking(tl *MatchTimeline) TargetWaveTakingTimeline {
 	out := TargetWaveTakingTimeline{
 		Method:                  targetWaveTakingMethod,
@@ -161,8 +162,8 @@ func DeriveTargetWaveTaking(tl *MatchTimeline) TargetWaveTakingTimeline {
 		}
 
 		for _, waveSample := range wave.Samples {
-			targetSample, ok := freshHeroSampleAtOrBefore(target, waveSample.T, targetWaveTakingSampleMaxAgeSeconds)
-			if !ok || !targetSample.Alive {
+			targetSample, ok := freshLivingHeroSampleAtOrBefore(tl, target, waveSample.T, targetWaveTakingSampleMaxAgeSeconds)
+			if !ok {
 				flush()
 				continue
 			}
@@ -259,6 +260,27 @@ func freshHeroSampleAtOrBefore(player *PlayerTimeline, t, maxAge float64) (HeroS
 	sample := player.Samples[i-1]
 	if t-sample.T > maxAge {
 		return HeroSample{}, false
+	}
+	return sample, true
+}
+
+// freshLivingHeroSampleAtOrBefore upgrades a fresh causal sample with exact
+// replay death evidence. This closes the sub-second gap where the latest 1 Hz
+// hero sample can still say alive after an exact death event. A later alive
+// sample naturally represents a respawn because only deaths at or after that
+// sample and at or before t invalidate it.
+func freshLivingHeroSampleAtOrBefore(tl *MatchTimeline, player *PlayerTimeline, t, maxAge float64) (HeroSample, bool) {
+	sample, ok := freshHeroSampleAtOrBefore(player, t, maxAge)
+	if !ok || !sample.Alive || tl == nil || player == nil {
+		return HeroSample{}, false
+	}
+	for _, death := range tl.Deaths {
+		if death.VictimSlot == nil || *death.VictimSlot != player.PlayerSlot {
+			continue
+		}
+		if death.T >= sample.T && death.T <= t {
+			return HeroSample{}, false
+		}
 	}
 	return sample, true
 }
