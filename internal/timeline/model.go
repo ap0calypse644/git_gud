@@ -20,6 +20,7 @@ type MatchTimeline struct {
 	LaneWaves           LaneWaveTimeline             `json:"lane_waves"`
 	LaneStructures      LaneStructureTimeline        `json:"lane_structures"`
 	TargetWaveTaking    TargetWaveTakingTimeline     `json:"target_wave_taking"`
+	TargetWaveDanger    TargetWaveDangerTimeline     `json:"target_wave_danger"`
 	Visibility          VisibilityTimeline           `json:"visibility"`
 	VisionSources       VisionSourceTimeline         `json:"vision_sources"`
 	Knowledge           KnowledgeTimeline            `json:"knowledge"`
