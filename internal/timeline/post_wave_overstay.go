@@ -2,13 +2,13 @@ package timeline
 
 import "sort"
 
-const targetPostWaveOverstayMethod = "m16_post_primary_next_cohort_outcome_v1"
+const targetPostWaveOverstayMethod = "m16_post_primary_next_cohort_combat_outcome_v2"
 
 // TargetPostWaveOverstayTimeline is deterministic evidence for the M17
 // post-wave-overstay / second-wave-greed detector. It deliberately emits no
 // coaching candidate or greed threshold. Point-in-time state is copied only
-// from M16's causal snapshots; next-cohort and death fields are explicitly
-// retrospective outcome/context evidence.
+// from M16's causal snapshots; next-cohort, combat-window, and death fields are
+// explicitly retrospective outcome/context evidence.
 type TargetPostWaveOverstayTimeline struct {
 	Available bool                            `json:"available"`
 	Method    string                          `json:"method"`
@@ -31,11 +31,12 @@ type TargetPostWaveOverstayContext struct {
 	ExposureEndT      float64 `json:"exposure_end_t"`
 	ObservedCreepLoss int     `json:"observed_creep_loss"`
 
-	EndState         TargetPostWaveState      `json:"end_state"`
-	ExposureEndState TargetPostWaveState      `json:"exposure_end_state"`
-	PostPrimary      TargetPostWaveChange     `json:"post_primary"`
-	NextCohort       TargetPostWaveNextCohort `json:"next_cohort"`
-	Outcome          TargetPostWaveOutcome    `json:"outcome"`
+	EndState         TargetPostWaveState         `json:"end_state"`
+	ExposureEndState TargetPostWaveState         `json:"exposure_end_state"`
+	PostPrimary      TargetPostWaveChange        `json:"post_primary"`
+	CombatContext    TargetPostWaveCombatContext `json:"combat_context"`
+	NextCohort       TargetPostWaveNextCohort    `json:"next_cohort"`
+	Outcome          TargetPostWaveOutcome       `json:"outcome"`
 }
 
 // TargetPostWaveState is a compact, causal M16 state summary. Enemy hero replay
@@ -81,6 +82,23 @@ type TargetPostWaveChange struct {
 	MaxLastSeenAgeDeltaSeconds    *float64 `json:"max_last_seen_age_delta_seconds,omitempty"`
 }
 
+// TargetPostWaveCombatContext is retrospective combat-window context around the
+// primary-end -> exposure-end interval. Consolidated fight interval overlap is
+// not player knowledge and must not be used as though the player knew a future
+// fight endpoint. The exact TargetFirstInvolvementT, when present, is a replay
+// combat fact and can safely establish whether target combat had already begun
+// by PrimaryEndT or only began during the later post-primary tail.
+type TargetPostWaveCombatContext struct {
+	ObservedFightOverlapAtPrimaryEnd       int      `json:"observed_fight_overlap_at_primary_end"`
+	TargetInvolvedFightOverlapAtPrimaryEnd int      `json:"target_involved_fight_overlap_at_primary_end"`
+	TargetCombatStartedByPrimaryEnd        bool     `json:"target_combat_started_by_primary_end"`
+	TargetCombatStartedDuringPostPrimary   bool     `json:"target_combat_started_during_post_primary"`
+	RelevantFightObservedStartT            *float64 `json:"relevant_fight_observed_start_t,omitempty"`
+	TargetFirstInvolvementT                *float64 `json:"target_first_involvement_t,omitempty"`
+	SecondsFromPrimaryEndToFirstInvolvement *float64 `json:"seconds_from_primary_end_to_first_involvement,omitempty"`
+	TargetFirstInvolvementSource           string   `json:"target_first_involvement_source,omitempty"`
+}
+
 // TargetPostWaveNextCohort links the immediately following replay-reconstructed
 // enemy cohort on the same lane. A later accepted M14 period for that wave is
 // retained as evidence that the target actually stayed/re-engaged for another
@@ -120,6 +138,11 @@ func DeriveTargetPostWaveOverstay(tl *MatchTimeline) TargetPostWaveOverstayTimel
 	}
 	out.Available = true
 
+	fightContexts := tl.TargetFightContexts
+	if len(fightContexts) == 0 && len(tl.Fights) > 0 {
+		fightContexts = DeriveTargetFightContexts(tl)
+	}
+
 	for _, danger := range tl.TargetWaveDanger.Contexts {
 		endSnapshot, endOK := targetWaveDangerSnapshotByKind(danger.Snapshots, "end")
 		exposureEndSnapshot, exposureEndOK := targetWaveDangerSnapshotByKind(danger.Snapshots, "exposure_end")
@@ -146,6 +169,7 @@ func DeriveTargetPostWaveOverstay(tl *MatchTimeline) TargetPostWaveOverstayTimel
 			ctx.ExposureEndState.T = danger.ExposureEndT
 		}
 		ctx.PostPrimary = summarizeTargetPostWaveChange(ctx.EndState, ctx.ExposureEndState, danger.EndT, danger.ExposureEndT)
+		ctx.CombatContext = summarizeTargetPostWaveCombatContext(fightContexts, danger.EndT, danger.ExposureEndT)
 		ctx.NextCohort = summarizeNextPostWaveCohort(tl, danger)
 		ctx.Outcome = summarizePostWaveOutcome(tl, danger.EndT)
 		out.Contexts = append(out.Contexts, ctx)
@@ -235,6 +259,70 @@ func summarizeTargetPostWaveChange(end, exposureEnd TargetPostWaveState, endT, e
 		if end.MaxLastSeenAgeSeconds != nil && exposureEnd.MaxLastSeenAgeSeconds != nil {
 			out.MaxLastSeenAgeDeltaSeconds = postWaveFloat64(*exposureEnd.MaxLastSeenAgeSeconds - *end.MaxLastSeenAgeSeconds)
 		}
+	}
+	return out
+}
+
+func summarizeTargetPostWaveCombatContext(fights []TargetFightContext, primaryEndT, exposureEndT float64) TargetPostWaveCombatContext {
+	out := TargetPostWaveCombatContext{}
+
+	var relevant *TargetFightContext
+	var relevantFirst float64
+	for i := range fights {
+		fight := &fights[i]
+		if !fight.ObservedTimingAvailable {
+			continue
+		}
+		if fight.ObservedStartT <= primaryEndT && fight.ObservedEndT >= primaryEndT {
+			out.ObservedFightOverlapAtPrimaryEnd++
+			if fight.TargetInvolved {
+				out.TargetInvolvedFightOverlapAtPrimaryEnd++
+			}
+		}
+		if !fight.TargetInvolved || fight.TargetFirstInvolvementT == nil {
+			continue
+		}
+		if fight.ObservedEndT < primaryEndT || fight.ObservedStartT > exposureEndT {
+			continue
+		}
+		first := *fight.TargetFirstInvolvementT
+		if first > exposureEndT {
+			continue
+		}
+
+		startedByEnd := first <= primaryEndT
+		if startedByEnd {
+			out.TargetCombatStartedByPrimaryEnd = true
+		} else if first <= exposureEndT {
+			out.TargetCombatStartedDuringPostPrimary = true
+		}
+
+		if relevant == nil {
+			relevant = fight
+			relevantFirst = first
+			continue
+		}
+		relevantStartedByEnd := relevantFirst <= primaryEndT
+		switch {
+		case startedByEnd && !relevantStartedByEnd:
+			relevant = fight
+			relevantFirst = first
+		case startedByEnd && relevantStartedByEnd && first > relevantFirst:
+			// Prefer the most recent combat start already established by EndT.
+			relevant = fight
+			relevantFirst = first
+		case !startedByEnd && !relevantStartedByEnd && first < relevantFirst:
+			// Otherwise prefer the first target combat event after EndT.
+			relevant = fight
+			relevantFirst = first
+		}
+	}
+
+	if relevant != nil {
+		out.RelevantFightObservedStartT = postWaveFloat64(relevant.ObservedStartT)
+		out.TargetFirstInvolvementT = postWaveFloat64(relevantFirst)
+		out.SecondsFromPrimaryEndToFirstInvolvement = postWaveFloat64(relevantFirst - primaryEndT)
+		out.TargetFirstInvolvementSource = relevant.TargetFirstInvolvementSource
 	}
 	return out
 }
