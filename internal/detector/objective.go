@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	TypeObjectiveMissCandidate = "objective_miss_candidate"
+	TypeObjectiveMissCandidate = "post_fight_conversion_review_candidate"
 
 	// Source 2 timeline coordinates use 128 world units per cell.
 	objectiveWorldScale = 128.0
