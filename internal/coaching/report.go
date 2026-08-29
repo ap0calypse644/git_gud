@@ -20,34 +20,38 @@ type MatchCoachingReport struct {
 
 // CoachingReportMoment is one prioritized coaching decision. Multiple detector
 // moments may be grouped when they describe the same underlying decision.
+// DecisionTimeFacts are facts available at or before the decision; later replay
+// consequences are kept separately in RetrospectiveOutcomes.
 type CoachingReportMoment struct {
-	SourceMomentIndexes []int    `json:"source_moment_indexes"`
-	SourceTypes         []string `json:"source_types"`
-	SourceConfidences   []string `json:"source_confidences"`
-	StartT              float64  `json:"start_t"`
-	EndT                float64  `json:"end_t"`
-	Assessment          string   `json:"assessment"`
-	Title               string   `json:"title"`
-	DeterministicFacts  []string `json:"deterministic_facts"`
-	Interpretation      string   `json:"interpretation"`
-	Alternative         string   `json:"alternative"`
-	WhyItMatters        string   `json:"why_it_matters"`
+	SourceMomentIndexes   []int    `json:"source_moment_indexes"`
+	SourceTypes           []string `json:"source_types"`
+	SourceConfidences     []string `json:"source_confidences"`
+	StartT                float64  `json:"start_t"`
+	EndT                  float64  `json:"end_t"`
+	Assessment            string   `json:"assessment"`
+	Title                 string   `json:"title"`
+	DecisionTimeFacts     []string `json:"decision_time_facts"`
+	RetrospectiveOutcomes []string `json:"retrospective_outcomes"`
+	Interpretation        string   `json:"interpretation"`
+	Alternative           string   `json:"alternative"`
+	WhyItMatters          string   `json:"why_it_matters"`
 }
 
 type modelReportOutput struct {
-	Summary    string                    `json:"summary"`
-	Priorities []string                  `json:"priorities"`
+	Summary    string                      `json:"summary"`
+	Priorities []string                    `json:"priorities"`
 	Moments    []modelCoachingReportMoment `json:"moments"`
 }
 
 type modelCoachingReportMoment struct {
-	SourceMomentIndexes []int    `json:"source_moment_indexes"`
-	Assessment          string   `json:"assessment"`
-	Title               string   `json:"title"`
-	DeterministicFacts  []string `json:"deterministic_facts"`
-	Interpretation      string   `json:"interpretation"`
-	Alternative         string   `json:"alternative"`
-	WhyItMatters        string   `json:"why_it_matters"`
+	SourceMomentIndexes   []int    `json:"source_moment_indexes"`
+	Assessment            string   `json:"assessment"`
+	Title                 string   `json:"title"`
+	DecisionTimeFacts     []string `json:"decision_time_facts"`
+	RetrospectiveOutcomes []string `json:"retrospective_outcomes"`
+	Interpretation        string   `json:"interpretation"`
+	Alternative           string   `json:"alternative"`
+	WhyItMatters          string   `json:"why_it_matters"`
 }
 
 func buildMatchCoachingReport(input MatchCoachingInput, modelOutput modelReportOutput) (MatchCoachingReport, error) {
@@ -93,17 +97,18 @@ func buildMatchCoachingReport(input MatchCoachingInput, modelOutput modelReportO
 		}
 
 		report.Moments = append(report.Moments, CoachingReportMoment{
-			SourceMomentIndexes: indexes,
-			SourceTypes:         types,
-			SourceConfidences:   confidences,
-			StartT:              startT,
-			EndT:                endT,
-			Assessment:          raw.Assessment,
-			Title:               raw.Title,
-			DeterministicFacts:  append([]string(nil), raw.DeterministicFacts...),
-			Interpretation:      raw.Interpretation,
-			Alternative:         raw.Alternative,
-			WhyItMatters:        raw.WhyItMatters,
+			SourceMomentIndexes:   indexes,
+			SourceTypes:           types,
+			SourceConfidences:     confidences,
+			StartT:                startT,
+			EndT:                  endT,
+			Assessment:            raw.Assessment,
+			Title:                 raw.Title,
+			DecisionTimeFacts:     append([]string(nil), raw.DecisionTimeFacts...),
+			RetrospectiveOutcomes: append([]string(nil), raw.RetrospectiveOutcomes...),
+			Interpretation:        raw.Interpretation,
+			Alternative:           raw.Alternative,
+			WhyItMatters:          raw.WhyItMatters,
 		})
 	}
 	return report, nil
@@ -150,17 +155,19 @@ func coachingReportJSONSchema() map[string]any {
 				"type": "string",
 				"enum": []string{"review", "likely_mistake", "probably_reasonable"},
 			},
-			"title":               map[string]any{"type": "string"},
-			"deterministic_facts": stringArray(6),
-			"interpretation":      map[string]any{"type": "string"},
-			"alternative":         map[string]any{"type": "string"},
-			"why_it_matters":      map[string]any{"type": "string"},
+			"title":                  map[string]any{"type": "string"},
+			"decision_time_facts":    stringArray(6),
+			"retrospective_outcomes": stringArray(4),
+			"interpretation":         map[string]any{"type": "string"},
+			"alternative":            map[string]any{"type": "string"},
+			"why_it_matters":         map[string]any{"type": "string"},
 		},
 		"required": []string{
 			"source_moment_indexes",
 			"assessment",
 			"title",
-			"deterministic_facts",
+			"decision_time_facts",
+			"retrospective_outcomes",
 			"interpretation",
 			"alternative",
 			"why_it_matters",
