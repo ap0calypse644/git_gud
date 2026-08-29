@@ -116,9 +116,10 @@ func TestTimelineReadyIsPendingWhenCoachingEnabled(t *testing.T) {
 	}
 }
 
-func TestTimelineReadyIsTerminalWhenCoachingDisabled(t *testing.T) {
+func TestTimelineReadyIsTerminalWhenCoachingAndPatternsDisabled(t *testing.T) {
 	cfg := testConfig()
 	cfg.Coaching.Enabled = false
+	cfg.Patterns.Enabled = false
 	store := storage.New(filepath.Join(t.TempDir(), "state.json"))
 	state := storage.NewState()
 	state.Initialized = true
@@ -133,6 +134,50 @@ func TestTimelineReadyIsTerminalWhenCoachingDisabled(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(matchProcessor.calls) != 0 {
+		t.Fatalf("processor calls = %#v", matchProcessor.calls)
+	}
+}
+
+func TestTimelineReadyIsPendingForPatternsWhenCoachingDisabled(t *testing.T) {
+	cfg := testConfig()
+	cfg.Coaching.Enabled = false
+	cfg.Patterns.Enabled = true
+	store := storage.New(filepath.Join(t.TempDir(), "state.json"))
+	state := storage.NewState()
+	state.Initialized = true
+	state.Put(&storage.MatchState{MatchID: 53, Status: storage.StatusTimelineReady})
+	if err := store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+
+	matchProcessor := &fakeProcessor{}
+	svc := New(cfg, &fakeAPI{}, matchProcessor, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err := svc.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(matchProcessor.calls) != 1 || matchProcessor.calls[0] != 53 {
+		t.Fatalf("processor calls = %#v", matchProcessor.calls)
+	}
+}
+
+func TestCoachingReadyIsPendingUntilPatternsBackfilled(t *testing.T) {
+	cfg := testConfig()
+	cfg.Patterns.Enabled = true
+	store := storage.New(filepath.Join(t.TempDir(), "state.json"))
+	state := storage.NewState()
+	state.Initialized = true
+	state.Put(&storage.MatchState{MatchID: 54, Status: storage.StatusCoachingReady, PatternRecorded: false})
+	state.Put(&storage.MatchState{MatchID: 55, Status: storage.StatusCoachingReady, PatternRecorded: true})
+	if err := store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+
+	matchProcessor := &fakeProcessor{}
+	svc := New(cfg, &fakeAPI{}, matchProcessor, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err := svc.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(matchProcessor.calls) != 1 || matchProcessor.calls[0] != 54 {
 		t.Fatalf("processor calls = %#v", matchProcessor.calls)
 	}
 }
