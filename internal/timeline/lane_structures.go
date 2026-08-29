@@ -5,23 +5,25 @@ import (
 	"strings"
 )
 
-const laneStructureMethod = "replay_observed_initial_lane_towers_and_combat_log_destruction_v2"
+const laneStructureMethod = "replay_observed_initial_lane_towers_forts_and_combat_log_destruction_v3"
 
-// LaneStructureTimeline combines two causal replay facts for lane towers:
-// named T1-T3 tower entities observed in the replay's initial map state, and
-// combat-log building-kill events that mark their destruction. The initial
-// tower set is serialized because detector CLIs operate on saved timelines and
-// must not need the raw replay or hidden parser-only geometry.
+// LaneStructureTimeline combines causal replay facts for public/static
+// structures: named T1-T3 tower and Fort entities observed in the replay's
+// initial map state, plus combat-log building-kill events that mark lane-tower
+// destruction. The initial geometry is serialized because detector CLIs operate
+// on saved timelines and must not need the raw replay or hidden parser state.
 type LaneStructureTimeline struct {
-	Available                bool                       `json:"available"`
-	Method                   string                     `json:"method"`
-	InitialLaneTowersObserved int                        `json:"initial_lane_towers_observed"`
+	Available                bool                        `json:"available"`
+	Method                   string                      `json:"method"`
+	InitialLaneTowersObserved int                         `json:"initial_lane_towers_observed"`
 	InitialTowers            []LaneStructureInitialTower `json:"initial_towers"`
-	BuildingKillsObserved    int                        `json:"building_kills_observed"`
-	LaneTowerKillsAccepted   int                        `json:"lane_tower_kills_accepted"`
-	IgnoredNonLaneStructures int                        `json:"ignored_non_lane_structures"`
-	RejectedMalformed        int                        `json:"rejected_malformed"`
-	Events                   []LaneStructureEvent       `json:"events"`
+	InitialFortsObserved     int                         `json:"initial_forts_observed"`
+	InitialForts             []LaneStructureInitialFort  `json:"initial_forts"`
+	BuildingKillsObserved    int                         `json:"building_kills_observed"`
+	LaneTowerKillsAccepted   int                         `json:"lane_tower_kills_accepted"`
+	IgnoredNonLaneStructures int                         `json:"ignored_non_lane_structures"`
+	RejectedMalformed        int                         `json:"rejected_malformed"`
+	Events                   []LaneStructureEvent        `json:"events"`
 }
 
 // LaneStructureInitialTower is a public/static lane tower proven to exist by a
@@ -30,6 +32,16 @@ type LaneStructureInitialTower struct {
 	Team       int     `json:"team"`
 	Lane       string  `json:"lane"`
 	Tier       int     `json:"tier"`
+	X          float64 `json:"x"`
+	Y          float64 `json:"y"`
+	EntityName string  `json:"entity_name"`
+}
+
+// LaneStructureInitialFort is the public-map Ancient/Fort position observed
+// from the replay's initial entity state. It is retained only as static geometry
+// for mechanics such as base backdoor protection.
+type LaneStructureInitialFort struct {
+	Team       int     `json:"team"`
 	X          float64 `json:"x"`
 	Y          float64 `json:"y"`
 	EntityName string  `json:"entity_name"`
@@ -56,24 +68,25 @@ type LaneStructureState struct {
 	Tier1PresentAtStart bool     `json:"tier1_present_at_start"`
 	Tier2PresentAtStart bool     `json:"tier2_present_at_start"`
 	Tier3PresentAtStart bool     `json:"tier3_present_at_start"`
-	Tier1KnownAlive    bool     `json:"tier1_known_alive"`
-	Tier2KnownAlive    bool     `json:"tier2_known_alive"`
-	Tier3KnownAlive    bool     `json:"tier3_known_alive"`
-	Tier1Destroyed     bool     `json:"tier1_destroyed"`
-	Tier2Destroyed     bool     `json:"tier2_destroyed"`
-	Tier3Destroyed     bool     `json:"tier3_destroyed"`
-	Tier1DestroyedAt   *float64 `json:"tier1_destroyed_at,omitempty"`
-	Tier2DestroyedAt   *float64 `json:"tier2_destroyed_at,omitempty"`
-	Tier3DestroyedAt   *float64 `json:"tier3_destroyed_at,omitempty"`
+	Tier1KnownAlive     bool     `json:"tier1_known_alive"`
+	Tier2KnownAlive     bool     `json:"tier2_known_alive"`
+	Tier3KnownAlive     bool     `json:"tier3_known_alive"`
+	Tier1Destroyed      bool     `json:"tier1_destroyed"`
+	Tier2Destroyed      bool     `json:"tier2_destroyed"`
+	Tier3Destroyed      bool     `json:"tier3_destroyed"`
+	Tier1DestroyedAt    *float64 `json:"tier1_destroyed_at,omitempty"`
+	Tier2DestroyedAt    *float64 `json:"tier2_destroyed_at,omitempty"`
+	Tier3DestroyedAt    *float64 `json:"tier3_destroyed_at,omitempty"`
 }
 
-// DeriveLaneStructures normalizes replay-observed named T1-T3 entities and
-// combat-log building_kill targets. T4, barracks, fort and filler structures
-// are deliberately excluded because they do not describe lane-front state.
+// DeriveLaneStructures normalizes replay-observed named T1-T3/Fort entities and
+// combat-log building_kill targets. T4, barracks and filler structures remain
+// outside the lane-front state model.
 func DeriveLaneStructures(tl *MatchTimeline) LaneStructureTimeline {
 	out := LaneStructureTimeline{
 		Method:        laneStructureMethod,
 		InitialTowers: []LaneStructureInitialTower{},
+		InitialForts:  []LaneStructureInitialFort{},
 		Events:        []LaneStructureEvent{},
 	}
 	if tl == nil {
@@ -82,10 +95,21 @@ func DeriveLaneStructures(tl *MatchTimeline) LaneStructureTimeline {
 	out.Available = true
 
 	initialSeen := make(map[[3]int]bool)
+	fortSeen := make(map[int]bool)
 	for _, tower := range tl.LaneTowerPositions {
 		if tower.Team != 2 && tower.Team != 3 {
 			continue
 		}
+		if tower.Lane == "base" && tower.Tier == 0 {
+			if !fortSeen[tower.Team] {
+				fortSeen[tower.Team] = true
+				out.InitialForts = append(out.InitialForts, LaneStructureInitialFort{
+					Team: tower.Team, X: tower.X, Y: tower.Y, EntityName: tower.RawName,
+				})
+			}
+			continue
+		}
+
 		lane := normalizeLaneName(tower.Lane)
 		if lane == "" || tower.Tier < 1 || tower.Tier > 3 {
 			continue
@@ -108,7 +132,11 @@ func DeriveLaneStructures(tl *MatchTimeline) LaneStructureTimeline {
 		}
 		return out.InitialTowers[i].Tier < out.InitialTowers[j].Tier
 	})
+	sort.SliceStable(out.InitialForts, func(i, j int) bool {
+		return out.InitialForts[i].Team < out.InitialForts[j].Team
+	})
 	out.InitialLaneTowersObserved = len(out.InitialTowers)
+	out.InitialFortsObserved = len(out.InitialForts)
 
 	seen := make(map[[3]int]bool)
 	for _, objective := range tl.Objectives {
