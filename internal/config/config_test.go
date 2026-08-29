@@ -34,4 +34,16 @@ func TestLoadDefaultsAndOverrides(t *testing.T) {
 	if cfg.OpenDota.APIKey != "from-env" {
 		t.Fatalf("api key = %q", cfg.OpenDota.APIKey)
 	}
+	if !cfg.Coaching.Enabled {
+		t.Fatal("coaching should be enabled by default")
+	}
+	if cfg.Coaching.Model != "gpt-5.6-terra" {
+		t.Fatalf("coaching model = %q", cfg.Coaching.Model)
+	}
+	if cfg.Coaching.Timeout.Duration() != 90*time.Second {
+		t.Fatalf("coaching timeout = %s", cfg.Coaching.Timeout.Duration())
+	}
+	if cfg.Coaching.MaxOutputTokens != 3000 {
+		t.Fatalf("coaching max output tokens = %d", cfg.Coaching.MaxOutputTokens)
+	}
 }

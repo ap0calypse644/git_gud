@@ -19,6 +19,7 @@ const (
 	StatusReplayWaiting     MatchStatus = "replay_waiting"
 	StatusReplayDownloaded  MatchStatus = "replay_downloaded"
 	StatusTimelineReady     MatchStatus = "timeline_ready"
+	StatusCoachingReady     MatchStatus = "coaching_ready"
 	StatusReplayUnavailable MatchStatus = "replay_unavailable"
 )
 
@@ -30,6 +31,7 @@ type MatchState struct {
 	LastAttemptAt    *time.Time  `json:"last_attempt_at,omitempty"`
 	ReplayPath       string      `json:"replay_path,omitempty"`
 	TimelinePath     string      `json:"timeline_path,omitempty"`
+	ReportPath       string      `json:"report_path,omitempty"`
 	LastError        string      `json:"last_error,omitempty"`
 }
 

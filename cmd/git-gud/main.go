@@ -10,8 +10,10 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 
+	"github.com/ap0calypse644/git_gud/internal/coaching"
 	"github.com/ap0calypse644/git_gud/internal/config"
 	"github.com/ap0calypse644/git_gud/internal/opendota"
 	"github.com/ap0calypse644/git_gud/internal/processor"
@@ -49,7 +51,30 @@ func run() error {
 	downloader := replay.NewDownloader(replayHTTPClient, cfg.Storage.Path, cfg.Replays.KeepCompressed)
 	timelineBuilder := timeline.NewBuilder(cfg.Storage.Path, cfg.Player.AccountID)
 	store := storage.New(filepath.Join(cfg.Storage.Path, "state.json"))
-	matchProcessor := processor.New(cfg, api, downloader, timelineBuilder, store, logger)
+
+	var coach processor.Coach
+	if cfg.Coaching.Enabled {
+		apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
+		if apiKey == "" {
+			return fmt.Errorf("OPENAI_API_KEY is required when coaching.enabled is true")
+		}
+		model := cfg.Coaching.Model
+		if envModel := strings.TrimSpace(os.Getenv("OPENAI_MODEL")); envModel != "" {
+			model = envModel
+		}
+		reporter := coaching.NewOpenAIReporter(
+			apiKey,
+			model,
+			&http.Client{Timeout: cfg.Coaching.Timeout.Duration()},
+		)
+		if baseURL := strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")); baseURL != "" {
+			reporter.BaseURL = baseURL
+		}
+		reporter.MaxOutputTokens = cfg.Coaching.MaxOutputTokens
+		coach = coaching.NewReportArtifactWriter(cfg.Storage.Path, reporter)
+	}
+
+	matchProcessor := processor.NewWithCoach(cfg, api, downloader, timelineBuilder, coach, store, logger)
 	watchService := watcher.New(cfg, api, matchProcessor, store, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

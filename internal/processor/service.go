@@ -2,15 +2,19 @@ package processor
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
+	"github.com/ap0calypse644/git_gud/internal/coaching"
 	"github.com/ap0calypse644/git_gud/internal/config"
 	"github.com/ap0calypse644/git_gud/internal/opendota"
 	"github.com/ap0calypse644/git_gud/internal/replay"
 	"github.com/ap0calypse644/git_gud/internal/storage"
+	"github.com/ap0calypse644/git_gud/internal/timeline"
 )
 
 // API is the subset of OpenDota used after a match ID is known.
@@ -27,6 +31,12 @@ type TimelineBuilder interface {
 	Build(context.Context, opendota.Match, string) (string, error)
 }
 
+// Coach is deliberately compact-only: raw MatchTimeline values are converted
+// to MatchCoachingInput before this boundary is crossed.
+type Coach interface {
+	Generate(context.Context, coaching.MatchCoachingInput) (string, error)
+}
+
 type StateStore interface {
 	Load() (storage.State, error)
 	Save(storage.State) error
@@ -40,6 +50,7 @@ type Result struct {
 	Status       storage.MatchStatus
 	ReplayPath   string
 	TimelinePath string
+	ReportPath   string
 }
 
 // Service owns processing after a match ID is known. Automatic discovery and
@@ -50,12 +61,20 @@ type Service struct {
 	api      API
 	acquirer Acquirer
 	timeline TimelineBuilder
+	coach    Coach
 	store    StateStore
 	log      *slog.Logger
 	now      func() time.Time
 }
 
+// New preserves the deterministic/replay-only construction seam used by tests
+// and diagnostic callers. The main git-gud command uses NewWithCoach so both
+// automatic and manual user-facing processing run the complete pipeline.
 func New(cfg config.Config, api API, acquirer Acquirer, timelineBuilder TimelineBuilder, store StateStore, logger *slog.Logger) *Service {
+	return NewWithCoach(cfg, api, acquirer, timelineBuilder, nil, store, logger)
+}
+
+func NewWithCoach(cfg config.Config, api API, acquirer Acquirer, timelineBuilder TimelineBuilder, coach Coach, store StateStore, logger *slog.Logger) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -64,16 +83,18 @@ func New(cfg config.Config, api API, acquirer Acquirer, timelineBuilder Timeline
 		api:      api,
 		acquirer: acquirer,
 		timeline: timelineBuilder,
+		coach:    coach,
 		store:    store,
 		log:      logger,
 		now:      time.Now,
 	}
 }
 
-// Process advances one match through metadata, replay acquisition, and replay
-// timeline generation. force bypasses retry throttling and is used by explicit
-// -match invocations. It never modifies State.LastSeenMatchID, so historical
-// processing cannot disturb automatic match discovery.
+// Process advances one match through metadata, replay acquisition, replay
+// timeline generation, and (when configured) coaching. force bypasses retry
+// throttling and is used by explicit -match invocations. It never modifies
+// State.LastSeenMatchID, so historical processing cannot disturb automatic
+// match discovery.
 func (s *Service) Process(ctx context.Context, matchID int64, force bool) (Result, error) {
 	state, err := s.store.Load()
 	if err != nil {
@@ -89,6 +110,10 @@ func (s *Service) Process(ctx context.Context, matchID int64, force bool) (Resul
 		}
 	}
 
+	if m.Status == storage.StatusCoachingReady {
+		return resultForState(opendota.Match{}, m), nil
+	}
+
 	now := s.now().UTC()
 	if !force && m.LastAttemptAt != nil && now.Sub(*m.LastAttemptAt) < s.cfg.Replays.RetryInterval.Duration() {
 		return resultForState(opendota.Match{}, m), nil
@@ -96,6 +121,19 @@ func (s *Service) Process(ctx context.Context, matchID int64, force bool) (Resul
 
 	m.LastAttemptAt = &now
 	m.LastError = ""
+
+	// A timeline is a durable deterministic artifact. If a previous coaching
+	// attempt failed, resume directly from it instead of re-fetching metadata,
+	// re-downloading the replay, or rebuilding the timeline.
+	if m.Status == storage.StatusTimelineReady && m.TimelinePath != "" {
+		if s.coach == nil {
+			if err := s.store.Save(state); err != nil {
+				return Result{}, err
+			}
+			return resultForState(opendota.Match{}, m), nil
+		}
+		return s.generateCoaching(ctx, state, m, opendota.Match{})
+	}
 
 	match, err := s.api.Match(ctx, matchID)
 	if err != nil {
@@ -172,6 +210,49 @@ func (s *Service) Process(ctx context.Context, matchID int64, force bool) (Resul
 		return Result{}, err
 	}
 	s.log.Info("replay timeline ready", "match_id", matchID, "path", timelinePath)
+
+	if s.coach == nil {
+		return resultForState(match, m), nil
+	}
+	return s.generateCoaching(ctx, state, m, match)
+}
+
+func (s *Service) generateCoaching(ctx context.Context, state storage.State, m *storage.MatchState, match opendota.Match) (Result, error) {
+	f, err := os.Open(m.TimelinePath)
+	if err != nil {
+		m.LastError = err.Error()
+		_ = s.store.Save(state)
+		return Result{}, fmt.Errorf("open replay timeline for coaching: %w", err)
+	}
+	defer f.Close()
+
+	var tl timeline.MatchTimeline
+	if err := json.NewDecoder(f).Decode(&tl); err != nil {
+		m.LastError = err.Error()
+		_ = s.store.Save(state)
+		return Result{}, fmt.Errorf("decode replay timeline for coaching: %w", err)
+	}
+	input := coaching.BuildMatchCoachingInput(&tl)
+	if input.MatchID != m.MatchID {
+		err := fmt.Errorf("coaching input match_id %d does not match state match_id %d", input.MatchID, m.MatchID)
+		m.LastError = err.Error()
+		_ = s.store.Save(state)
+		return Result{}, err
+	}
+
+	reportPath, err := s.coach.Generate(ctx, input)
+	if err != nil {
+		m.LastError = err.Error()
+		_ = s.store.Save(state)
+		return Result{}, fmt.Errorf("generate coaching report: %w", err)
+	}
+	m.Status = storage.StatusCoachingReady
+	m.ReportPath = reportPath
+	m.LastError = ""
+	if err := s.store.Save(state); err != nil {
+		return Result{}, err
+	}
+	s.log.Info("coaching report ready", "match_id", m.MatchID, "path", reportPath)
 	return resultForState(match, m), nil
 }
 
@@ -181,6 +262,7 @@ func resultForState(match opendota.Match, state *storage.MatchState) Result {
 		Status:       state.Status,
 		ReplayPath:   state.ReplayPath,
 		TimelinePath: state.TimelinePath,
+		ReportPath:   state.ReportPath,
 	}
 }
 

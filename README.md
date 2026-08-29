@@ -1,40 +1,67 @@
 # git_gud
 
-`git_gud` is a personal Dota 2 replay-coaching service. The end goal is to turn each completed match into a player-centric timeline and generate coaching such as: "at 13:45, taking the next wave was unsafe because the relevant enemy catch heroes had been missing and no ally was close enough to support you."
+`git_gud` is a personal Dota 2 replay-coaching service. It automatically discovers new matches for one configured OpenDota account, acquires and parses the replay, derives causal detector evidence, builds a compact coaching input, and generates a structured AI coaching report.
 
-This branch implements the first two milestones only:
-
-- **M0:** detect new public matches for a configured OpenDota account and persist durable watcher state.
-- **M1:** fetch detailed OpenDota match metadata, request parsing when replay metadata is missing, download the Valve replay when it becomes available, and decompress it to a local `.dem` file.
-
-Replay parsing and coaching are deliberately *not* in M0/M1. M2 will feed the `.dem` into a Source 2 replay parser (planned: Manta) and produce normalized timeline data.
+The AI boundary is intentionally strict: the remote report generator receives only `MatchCoachingInput`, never the raw `MatchTimeline`.
 
 ## Requirements
 
 - Go 1.23+
 - A public OpenDota profile/match history
-- Internet access to `api.opendota.com` and Valve replay hosts
+- Internet access to OpenDota, Valve replay hosts, and the configured OpenAI API endpoint
+- `OPENAI_API_KEY` when coaching is enabled
 
-An OpenDota API key is optional for the initial single-player use case, but can be supplied in config or via `OPENDOTA_API_KEY`.
+An OpenDota API key is optional for the single-player use case and can be supplied in config or via `OPENDOTA_API_KEY`.
+
+The OpenAI key is environment-only and is not stored in `config.json`.
 
 ## Quick start
 
 ```bash
 cp config.example.json config.json
+```
+
+Set your OpenAI API key in the shell, then run:
+
+```bash
 go run ./cmd/git-gud -config config.json
 ```
 
-The example config is already set to account `256161923`.
+The example config is set to account `256161923` and has automatic coaching enabled.
 
-On its **first normal watcher run**, `bootstrap_existing: false` establishes the newest current match as the baseline and does not download historical replays. Every subsequently discovered match is persisted to `data/state.json` and processed.
+On the first normal watcher run, `bootstrap_existing: false` establishes the newest current match as the discovery baseline and does not pull older matches automatically. Every subsequently discovered match is persisted to `data/state.json` and advanced through the processing pipeline.
 
-For a one-off historical test without changing that baseline:
+## Manual historical analysis
+
+A historical match can be processed without changing the watcher's discovery baseline:
 
 ```bash
 go run ./cmd/git-gud -config config.json -match 8962145737
 ```
 
-To perform one discovery/acquisition cycle and exit:
+The manual and automatic paths use the same processor. With coaching enabled, both run:
+
+```text
+match metadata
+  -> replay acquisition
+  -> deterministic timeline
+  -> compact MatchCoachingInput
+  -> structured AI coaching report
+```
+
+Reports are stored at:
+
+```text
+data/reports/<match_id>.json
+```
+
+Timelines are stored at:
+
+```text
+data/timelines/<match_id>.json
+```
+
+To perform one automatic discovery/processing cycle and exit:
 
 ```bash
 go run ./cmd/git-gud -config config.json -once
@@ -56,31 +83,19 @@ metadata_ready
     |
     v
 replay_downloaded
+    |
+    v
+timeline_ready
+    |
+    v
+coaching_ready
 ```
 
-If the configured replay retry window expires, the match is marked `replay_unavailable` so the watcher does not hammer OpenDota forever.
+If replay acquisition exceeds the configured retry window, the match becomes `replay_unavailable` and is no longer retried automatically.
 
-State is written atomically to `data/state.json`. Replay downloads are also written through temporary files and atomically renamed only after successful completion.
+`timeline_ready` is deliberately durable. If the coaching provider fails, the watcher retries from the existing timeline rather than re-downloading or re-parsing the replay.
 
-## Replay acquisition
-
-The service prefers `replay_url` returned by OpenDota. When only `cluster` and `replay_salt` are available, it constructs the standard Valve replay URL:
-
-```text
-https://replay<cluster>.valve.net/570/<match_id>_<replay_salt>.dem.bz2
-```
-
-The compressed replay is downloaded and then decompressed with Go's standard-library bzip2 reader:
-
-```text
-data/replays/<match_id>.dem
-```
-
-Set `replays.keep_compressed: true` to retain the `.dem.bz2` alongside it.
-
-## Why OpenDota parsing is requested
-
-A public match can appear in recent-match history before OpenDota has Game Coordinator/replay data for it. In that state there is no reliable replay salt from the normal public match summary. With `replays.request_parse: true`, `git_gud` submits `POST /request/{match_id}` once and waits for replay metadata to appear rather than guessing a replay URL.
+State and report artifacts are written atomically.
 
 ## Configuration
 
@@ -92,6 +107,34 @@ See [`config.example.json`](config.example.json). Important defaults:
 - replay download timeout: `10m`
 - bootstrap historical matches: disabled
 - compressed replay retention: disabled
+- coaching: enabled
+- coaching model: `gpt-5.6-terra`
+- coaching timeout: `90s`
+- coaching max output tokens: `3000`
+
+OpenAI environment variables:
+
+- `OPENAI_API_KEY`: required when `coaching.enabled` is true
+- `OPENAI_MODEL`: optional model override
+- `OPENAI_BASE_URL`: optional API base URL override
+
+OpenDota environment variable:
+
+- `OPENDOTA_API_KEY`: optional API-key override
+
+## Coaching behavior
+
+The deterministic layer emits low-confidence review candidates and compact evidence. The report layer is expected to:
+
+- prioritize only a handful of high-value decisions;
+- preserve detector confidence;
+- distinguish decision-time facts from retrospective outcomes;
+- keep inference separate from deterministic facts;
+- avoid hidden-information claims and exact unseen enemy positions;
+- group overlapping detector signals rather than duplicate coaching;
+- suggest plausible alternatives without hindsight-only reasoning.
+
+Detector candidates are review targets, not automatic proof of mistakes.
 
 ## Tests
 
@@ -99,18 +142,4 @@ See [`config.example.json`](config.example.json). Important defaults:
 go test ./...
 ```
 
-The tests use local HTTP servers/fakes; they do not call OpenDota or Valve.
-
-## Next milestone: M2
-
-M2 will parse downloaded `.dem` files and extract a normalized player-centric event stream. Initial targets:
-
-- hero positions and movement
-- deaths/kills/assists
-- item and ability events
-- combat events and teamfights
-- towers/Roshan/objectives
-- creep waves and lane exposure
-- conservative last-seen enemy state for fog-of-war-safe coaching
-
-The AI layer comes only after this deterministic extraction step.
+CI also runs `go vet ./...`. Unit tests use local HTTP servers and fakes; they do not call OpenDota, Valve, or OpenAI.
