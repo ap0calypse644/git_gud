@@ -1,6 +1,7 @@
 package coaching
 
 import (
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -50,6 +51,21 @@ func BuildMatchCoachingInput(tl *timeline.MatchTimeline) MatchCoachingInput {
 			Type:       candidate.Type,
 			StartT:     candidate.T,
 			EndT:       candidate.T,
+			Confidence: candidate.Confidence,
+			Evidence:   evidence,
+		})
+	}
+
+	postWaveAnalysis := detector.AnalyzePostWaves(tl)
+	for _, candidate := range postWaveAnalysis.Candidates {
+		evidence, startT, endT, ok := postWaveCandidateEvidence(candidate)
+		if !ok {
+			continue
+		}
+		out.Moments = append(out.Moments, CoachingMoment{
+			Type:       candidate.Type,
+			StartT:     startT,
+			EndT:       endT,
 			Confidence: candidate.Confidence,
 			Evidence:   evidence,
 		})
@@ -113,6 +129,47 @@ func fightCandidateEvidence(candidate detector.FightCandidate) (any, bool) {
 	}
 }
 
+func postWaveCandidateEvidence(candidate detector.PostWaveCandidate) (PostWaveOverstayReviewEvidence, float64, float64, bool) {
+	if candidate.Type != detector.TypePostWaveOverstayCandidate || candidate.PostWave == nil {
+		return PostWaveOverstayReviewEvidence{}, 0, 0, false
+	}
+	source := candidate.PostWave
+	if source.WaveID == "" || !validObjectiveLane(source.Lane) ||
+		!finite(source.LastDepletionT) || !finite(source.ExposureEndT) ||
+		source.ExposureEndT <= source.LastDepletionT ||
+		!finite(source.PostClearDurationSeconds) || source.PostClearDurationSeconds <= 0 ||
+		source.PostClearLaneProgressDeltaWorld == nil ||
+		!finite(*source.PostClearLaneProgressDeltaWorld) || *source.PostClearLaneProgressDeltaWorld <= 0 ||
+		!source.TargetAvailableAtClear || !source.TargetAliveAtClear ||
+		source.TargetCombatStartedByLastDepletion || !source.TargetCombatStartedDuringPostClear ||
+		source.SecondsFromClearToFirstInvolvement == nil ||
+		!finite(*source.SecondsFromClearToFirstInvolvement) || *source.SecondsFromClearToFirstInvolvement <= 0 {
+		return PostWaveOverstayReviewEvidence{}, 0, 0, false
+	}
+	if source.TargetFirstInvolvementT == nil || !finite(*source.TargetFirstInvolvementT) ||
+		*source.TargetFirstInvolvementT <= source.LastDepletionT || *source.TargetFirstInvolvementT > source.ExposureEndT {
+		return PostWaveOverstayReviewEvidence{}, 0, 0, false
+	}
+	if source.NextTargetDeathT != nil && (!finite(*source.NextTargetDeathT) || *source.NextTargetDeathT < source.LastDepletionT) {
+		return PostWaveOverstayReviewEvidence{}, 0, 0, false
+	}
+
+	evidence := PostWaveOverstayReviewEvidence{
+		WaveID:                              source.WaveID,
+		Lane:                                source.Lane,
+		LastDepletionT:                      source.LastDepletionT,
+		ExposureEndT:                        source.ExposureEndT,
+		PostClearDurationSeconds:            source.PostClearDurationSeconds,
+		PostClearLaneProgressDeltaWorld:     *source.PostClearLaneProgressDeltaWorld,
+		TargetCombatStartedDuringPostClear:  source.TargetCombatStartedDuringPostClear,
+		SecondsFromClearToFirstInvolvement:  *source.SecondsFromClearToFirstInvolvement,
+		TargetFirstInvolvementSource:        source.TargetFirstInvolvementSource,
+		NextWaveTakingObserved:              source.NextWaveTakingObserved,
+		NextTargetDeathT:                    copyFloat64(source.NextTargetDeathT),
+	}
+	return evidence, source.LastDepletionT, source.ExposureEndT, true
+}
+
 func objectiveCandidateEvidence(candidate detector.ObjectiveCandidate) (PostFightConversionReviewEvidence, float64, float64, bool) {
 	if candidate.Type != detector.TypePostFightConversionReviewCandidate || candidate.Objective == nil {
 		return PostFightConversionReviewEvidence{}, 0, 0, false
@@ -151,6 +208,18 @@ func objectiveCandidateEvidence(candidate detector.ObjectiveCandidate) (PostFigh
 		NoTargetTeamConversion:        source.NoTargetTeamConversion,
 	}
 	return evidence, source.FightObservedStartT, source.WindowEndT, true
+}
+
+func finite(value float64) bool {
+	return !math.IsNaN(value) && !math.IsInf(value, 0)
+}
+
+func copyFloat64(value *float64) *float64 {
+	if value == nil {
+		return nil
+	}
+	copied := *value
+	return &copied
 }
 
 func validObjectiveLane(lane string) bool {
