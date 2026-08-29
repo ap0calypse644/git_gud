@@ -75,11 +75,21 @@ func TestDeriveTargetWaveDangerContextCausalEvidence(t *testing.T) {
 	if !got.LaneProgressAvailable || len(got.LaneGeometries) != 1 {
 		t.Fatalf("expected validated lane progress geometry: %#v", got)
 	}
-	if len(got.Contexts) != 1 || len(got.Contexts[0].Snapshots) != 1 {
-		t.Fatalf("expected one context with one deduplicated snapshot, got %#v", got.Contexts)
+	if len(got.Contexts) != 1 || len(got.Contexts[0].Snapshots) != 6 {
+		t.Fatalf("expected one context with six semantic anchors, got %#v", got.Contexts)
+	}
+	wantKinds := []string{"exposure_start", "start", "first_depletion", "last_depletion", "end", "exposure_end"}
+	for i, want := range wantKinds {
+		if got.Contexts[0].Snapshots[i].Kind != want || got.Contexts[0].Snapshots[i].T != 10 {
+			t.Fatalf("semantic anchor %d = %#v, want kind=%q t=10", i, got.Contexts[0].Snapshots[i], want)
+		}
+	}
+	trend := got.Contexts[0].TargetLaneProgressTrend
+	if !trend.Available || trend.StartToFirstDepletionDeltaWorld != 0 || trend.StartToEndDeltaWorld != 0 || trend.EndToExposureEndDeltaWorld != 0 || trend.ExposureStartToExposureEndDeltaWorld != 0 {
+		t.Fatalf("unexpected zero-duration progress trend: %#v", trend)
 	}
 
-	s := got.Contexts[0].Snapshots[0]
+	s := got.Contexts[0].Snapshots[1]
 	if !s.TargetAvailable || s.TargetSampleT != 9 || s.TargetX != 100 || s.TargetY != 100 {
 		t.Fatalf("target lookup used future or wrong sample: %#v", s)
 	}
@@ -115,6 +125,44 @@ func TestDeriveTargetWaveDangerContextCausalEvidence(t *testing.T) {
 	}
 }
 
+func TestTargetWaveDangerProgressTrendPreservesDirection(t *testing.T) {
+	snapshots := []TargetWaveDangerSnapshot{
+		{Kind: "exposure_start", LaneProgressAvailable: true, TargetLaneProgressWorld: 100},
+		{Kind: "start", LaneProgressAvailable: true, TargetLaneProgressWorld: 120},
+		{Kind: "first_depletion", LaneProgressAvailable: true, TargetLaneProgressWorld: 150},
+		{Kind: "last_depletion", LaneProgressAvailable: true, TargetLaneProgressWorld: 175},
+		{Kind: "end", LaneProgressAvailable: true, TargetLaneProgressWorld: 180},
+		{Kind: "exposure_end", LaneProgressAvailable: true, TargetLaneProgressWorld: 160},
+	}
+
+	got := targetWaveDangerProgressTrend(snapshots)
+	if !got.Available {
+		t.Fatal("expected temporal progress evidence")
+	}
+	if got.ExposureStartToStartDeltaWorld != 20 || got.StartToFirstDepletionDeltaWorld != 30 || got.StartToEndDeltaWorld != 60 {
+		t.Fatalf("unexpected forward deltas: %#v", got)
+	}
+	if got.EndToExposureEndDeltaWorld != -20 {
+		t.Fatalf("retreat after primary end must remain negative: %#v", got)
+	}
+	if got.ExposureStartToExposureEndDeltaWorld != 60 {
+		t.Fatalf("unexpected raw exposure delta: %#v", got)
+	}
+}
+
+func TestTargetWaveDangerProgressTrendFailsClosedWhenAnchorUnavailable(t *testing.T) {
+	snapshots := []TargetWaveDangerSnapshot{
+		{Kind: "exposure_start", LaneProgressAvailable: true, TargetLaneProgressWorld: 100},
+		{Kind: "start", LaneProgressAvailable: true, TargetLaneProgressWorld: 120},
+		{Kind: "first_depletion", LaneProgressAvailable: true, TargetLaneProgressWorld: 150},
+		{Kind: "end", LaneProgressAvailable: true, TargetLaneProgressWorld: 180},
+		{Kind: "exposure_end", LaneProgressAvailable: false},
+	}
+	if got := targetWaveDangerProgressTrend(snapshots); got.Available {
+		t.Fatalf("trend must fail closed when a required anchor is unavailable: %#v", got)
+	}
+}
+
 func TestDeriveTargetWaveDangerContextLaneProgressFailsClosedWithoutGeometry(t *testing.T) {
 	tl := &MatchTimeline{
 		TargetPlayerSlot: 1,
@@ -136,6 +184,9 @@ func TestDeriveTargetWaveDangerContextLaneProgressFailsClosedWithoutGeometry(t *
 	}
 	if got.LaneProgressAvailable || got.LaneProgressUnavailableReason == "" {
 		t.Fatalf("lane progress must fail closed without geometry: %#v", got)
+	}
+	if len(got.Contexts) != 1 || got.Contexts[0].TargetLaneProgressTrend.Available {
+		t.Fatalf("temporal progress must fail closed without geometry: %#v", got.Contexts)
 	}
 }
 
