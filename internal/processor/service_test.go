@@ -2,23 +2,30 @@ package processor
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/ap0calypse644/git_gud/internal/coaching"
 	"github.com/ap0calypse644/git_gud/internal/config"
 	"github.com/ap0calypse644/git_gud/internal/opendota"
 	"github.com/ap0calypse644/git_gud/internal/storage"
+	"github.com/ap0calypse644/git_gud/internal/timeline"
 )
 
 type fakeAPI struct {
 	matches       map[int64]opendota.Match
+	matchCalls    []int64
 	parseRequests []int64
 }
 
 func (f *fakeAPI) Match(_ context.Context, id int64) (opendota.Match, error) {
+	f.matchCalls = append(f.matchCalls, id)
 	return f.matches[id], nil
 }
 
@@ -43,6 +50,17 @@ type fakeTimelineBuilder struct {
 func (f *fakeTimelineBuilder) Build(_ context.Context, match opendota.Match, _ string) (string, error) {
 	f.calls = append(f.calls, match.MatchID)
 	return filepath.Join("data", "timelines", "test.json"), nil
+}
+
+type fakeCoach struct {
+	calls []coaching.MatchCoachingInput
+	path  string
+	err   error
+}
+
+func (f *fakeCoach) Generate(_ context.Context, input coaching.MatchCoachingInput) (string, error) {
+	f.calls = append(f.calls, input)
+	return f.path, f.err
 }
 
 func testConfig() config.Config {
@@ -126,4 +144,99 @@ func TestProcessRequestsParseThenAcquiresReplay(t *testing.T) {
 	if len(acquirer.calls) != 1 || acquirer.calls[0] != 43 {
 		t.Fatalf("acquirer calls = %#v", acquirer.calls)
 	}
+}
+
+func TestProcessResumesTimelineReadyDirectlyIntoCoaching(t *testing.T) {
+	cfg := testConfig()
+	root := t.TempDir()
+	store := storage.New(filepath.Join(root, "state.json"))
+	timelinePath := writeTimelineFixture(t, root, 44)
+	state := storage.NewState()
+	state.Initialized = true
+	state.LastSeenMatchID = 100
+	state.Put(&storage.MatchState{MatchID: 44, Status: storage.StatusTimelineReady, TimelinePath: timelinePath})
+	if err := store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+
+	api := &fakeAPI{matches: map[int64]opendota.Match{}}
+	acquirer := &fakeAcquirer{}
+	timelineBuilder := &fakeTimelineBuilder{}
+	coach := &fakeCoach{path: filepath.Join(root, "reports", "44.json")}
+	svc := NewWithCoach(cfg, api, acquirer, timelineBuilder, coach, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	result, err := svc.Process(context.Background(), 44, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != storage.StatusCoachingReady || result.ReportPath != coach.path {
+		t.Fatalf("result=%#v", result)
+	}
+	if len(coach.calls) != 1 || coach.calls[0].MatchID != 44 || coach.calls[0].Hero != "slark" {
+		t.Fatalf("coach calls=%#v", coach.calls)
+	}
+	if len(api.matchCalls) != 0 || len(acquirer.calls) != 0 || len(timelineBuilder.calls) != 0 {
+		t.Fatalf("upstream work repeated: api=%v acquire=%v timeline=%v", api.matchCalls, acquirer.calls, timelineBuilder.calls)
+	}
+
+	got, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LastSeenMatchID != 100 {
+		t.Fatalf("coaching changed watcher baseline: got %d want 100", got.LastSeenMatchID)
+	}
+	if match := got.Match(44); match == nil || match.Status != storage.StatusCoachingReady || match.ReportPath != coach.path {
+		t.Fatalf("match state=%#v", match)
+	}
+}
+
+func TestProcessCoachingFailureKeepsTimelineReady(t *testing.T) {
+	cfg := testConfig()
+	root := t.TempDir()
+	store := storage.New(filepath.Join(root, "state.json"))
+	timelinePath := writeTimelineFixture(t, root, 45)
+	state := storage.NewState()
+	state.Put(&storage.MatchState{MatchID: 45, Status: storage.StatusTimelineReady, TimelinePath: timelinePath})
+	if err := store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+
+	coach := &fakeCoach{err: errors.New("temporary provider failure")}
+	svc := NewWithCoach(cfg, &fakeAPI{matches: map[int64]opendota.Match{}}, &fakeAcquirer{}, &fakeTimelineBuilder{}, coach, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if _, err := svc.Process(context.Background(), 45, true); err == nil {
+		t.Fatal("coaching failure unexpectedly succeeded")
+	}
+
+	got, err := store.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	match := got.Match(45)
+	if match == nil || match.Status != storage.StatusTimelineReady {
+		t.Fatalf("match state=%#v", match)
+	}
+	if match.ReportPath != "" || match.LastError != "temporary provider failure" {
+		t.Fatalf("failed coaching state=%#v", match)
+	}
+}
+
+func writeTimelineFixture(t *testing.T, root string, matchID int64) string {
+	t.Helper()
+	path := filepath.Join(root, "timeline.json")
+	tl := timeline.MatchTimeline{
+		MatchID:          matchID,
+		TargetPlayerSlot: 0,
+		Players: map[string]*timeline.PlayerTimeline{
+			"0": {PlayerSlot: 0, HeroName: "slark"},
+		},
+	}
+	data, err := json.Marshal(tl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
