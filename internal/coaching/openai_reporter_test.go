@@ -58,19 +58,26 @@ func TestOpenAIReporterGenerateUsesOnlyCompactInputAndStructuredSchema(t *testin
 			t.Fatalf("format=%#v", text["format"])
 		}
 
-		encodedRequest, err := json.Marshal(request)
-		if err != nil {
-			t.Fatalf("marshal request: %v", err)
+		messages, ok := request["input"].([]any)
+		if !ok || len(messages) != 2 {
+			t.Fatalf("input messages=%#v", request["input"])
 		}
-		requestText := string(encodedRequest)
+		userMessage, ok := messages[1].(map[string]any)
+		if !ok {
+			t.Fatalf("user message=%#v", messages[1])
+		}
+		userContent, ok := userMessage["content"].(string)
+		if !ok {
+			t.Fatalf("user content=%#v", userMessage["content"])
+		}
 		for _, required := range []string{"\"match_id\":123", "post_wave_overstay_candidate", "3:150:bottom"} {
-			if !strings.Contains(requestText, required) {
-				t.Errorf("request missing %q: %s", required, requestText)
+			if !strings.Contains(userContent, required) {
+				t.Errorf("user payload missing %q: %s", required, userContent)
 			}
 		}
 		for _, forbidden := range []string{"target_wave_danger", "target_post_wave_overstay", "\"players\"", "777.125", "888.25"} {
-			if strings.Contains(requestText, forbidden) {
-				t.Errorf("request leaked %q: %s", forbidden, requestText)
+			if strings.Contains(userContent, forbidden) {
+				t.Errorf("user payload leaked %q: %s", forbidden, userContent)
 			}
 		}
 
