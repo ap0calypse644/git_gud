@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	targetWaveDangerMethod              = "causal_wave_taking_structure_support_knowledge_lane_geometry_v2"
+	targetWaveDangerMethod              = "causal_wave_taking_structure_support_knowledge_lane_geometry_death_aware_v3"
 	targetWaveDangerSampleMaxAgeSeconds = 1.5
 )
 
@@ -64,12 +64,12 @@ type TargetWaveDangerSnapshot struct {
 	WaveY         float64 `json:"wave_y,omitempty"`
 	CreepCount    int     `json:"creep_count,omitempty"`
 
-	LaneProgressAvailable    bool    `json:"lane_progress_available"`
-	TargetLaneProgressWorld  float64 `json:"target_lane_progress_world,omitempty"`
-	TargetLaneOffsetWorld    float64 `json:"target_lane_offset_world,omitempty"`
-	WaveLaneProgressAvailable bool   `json:"wave_lane_progress_available"`
-	WaveLaneProgressWorld    float64 `json:"wave_lane_progress_world,omitempty"`
-	WaveLaneOffsetWorld      float64 `json:"wave_lane_offset_world,omitempty"`
+	LaneProgressAvailable     bool    `json:"lane_progress_available"`
+	TargetLaneProgressWorld   float64 `json:"target_lane_progress_world,omitempty"`
+	TargetLaneOffsetWorld     float64 `json:"target_lane_offset_world,omitempty"`
+	WaveLaneProgressAvailable bool    `json:"wave_lane_progress_available"`
+	WaveLaneProgressWorld     float64 `json:"wave_lane_progress_world,omitempty"`
+	WaveLaneOffsetWorld       float64 `json:"wave_lane_offset_world,omitempty"`
 
 	NearbyAllies []WaveTakingNearbyAlly `json:"nearby_allies"`
 
@@ -81,22 +81,23 @@ type TargetWaveDangerSnapshot struct {
 	// Retreat/forward references use the outermost tower whose destruction has
 	// not been observed by T. They are conservative references, not assertions
 	// that the tower is alive.
-	FriendlyRetreatReferenceAvailable      bool    `json:"friendly_retreat_reference_available"`
-	FriendlyRetreatReferenceTier           int     `json:"friendly_retreat_reference_tier,omitempty"`
-	FriendlyRetreatReferenceProgressWorld  float64 `json:"friendly_retreat_reference_progress_world,omitempty"`
-	TargetForwardOfFriendlyReferenceWorld  float64 `json:"target_forward_of_friendly_reference_world,omitempty"`
-	WaveForwardOfFriendlyReferenceWorld    float64 `json:"wave_forward_of_friendly_reference_world,omitempty"`
-	EnemyForwardReferenceAvailable         bool    `json:"enemy_forward_reference_available"`
-	EnemyForwardReferenceTier              int     `json:"enemy_forward_reference_tier,omitempty"`
-	EnemyForwardReferenceProgressWorld     float64 `json:"enemy_forward_reference_progress_world,omitempty"`
-	TargetForwardOfEnemyReferenceWorld     float64 `json:"target_forward_of_enemy_reference_world,omitempty"`
-	WaveForwardOfEnemyReferenceWorld       float64 `json:"wave_forward_of_enemy_reference_world,omitempty"`
+	FriendlyRetreatReferenceAvailable     bool    `json:"friendly_retreat_reference_available"`
+	FriendlyRetreatReferenceTier          int     `json:"friendly_retreat_reference_tier,omitempty"`
+	FriendlyRetreatReferenceProgressWorld float64 `json:"friendly_retreat_reference_progress_world,omitempty"`
+	TargetForwardOfFriendlyReferenceWorld float64 `json:"target_forward_of_friendly_reference_world,omitempty"`
+	WaveForwardOfFriendlyReferenceWorld   float64 `json:"wave_forward_of_friendly_reference_world,omitempty"`
+	EnemyForwardReferenceAvailable        bool    `json:"enemy_forward_reference_available"`
+	EnemyForwardReferenceTier             int     `json:"enemy_forward_reference_tier,omitempty"`
+	EnemyForwardReferenceProgressWorld    float64 `json:"enemy_forward_reference_progress_world,omitempty"`
+	TargetForwardOfEnemyReferenceWorld    float64 `json:"target_forward_of_enemy_reference_world,omitempty"`
+	WaveForwardOfEnemyReferenceWorld      float64 `json:"wave_forward_of_enemy_reference_world,omitempty"`
 
 	EnemyKnowledge []EnemyKnowledgeState `json:"enemy_knowledge"`
 }
 
 // WaveTakingNearbyAlly records every alive allied primary hero with a fresh
-// causal sample. No support-radius threshold is applied at this evidence stage.
+// causal sample. Exact deaths between that sample and the snapshot invalidate
+// the ally. No support-radius threshold is applied at this evidence stage.
 type WaveTakingNearbyAlly struct {
 	PlayerSlot       int     `json:"player_slot"`
 	SampleT          float64 `json:"sample_t"`
@@ -112,10 +113,10 @@ type WaveTakingNearbyAlly struct {
 // replay geometry continue to fail lane progress closed rather than guessing.
 func DeriveTargetWaveDangerContext(tl *MatchTimeline, towerPositionSets ...[]LaneTowerPosition) TargetWaveDangerTimeline {
 	out := TargetWaveDangerTimeline{
-		Method:                targetWaveDangerMethod,
-		SampleMaxAgeSeconds:   targetWaveDangerSampleMaxAgeSeconds,
-		LaneGeometries:        []LaneProgressGeometry{},
-		Contexts:              []TargetWaveDangerContext{},
+		Method:              targetWaveDangerMethod,
+		SampleMaxAgeSeconds: targetWaveDangerSampleMaxAgeSeconds,
+		LaneGeometries:      []LaneProgressGeometry{},
+		Contexts:            []TargetWaveDangerContext{},
 	}
 	if tl == nil || !tl.TargetWaveTaking.Available {
 		out.LaneProgressUnavailableReason = "target wave-taking capability unavailable"
@@ -232,16 +233,14 @@ func targetWaveDangerSnapshotAt(
 		EnemyKnowledge: enemyKnowledgeAt(tl, target.Team, t),
 	}
 
-	if sample, ok := freshHeroSampleAtOrBefore(target, t, targetWaveDangerSampleMaxAgeSeconds); ok {
+	if sample, ok := freshLivingHeroSampleAtOrBefore(tl, target, t, targetWaveDangerSampleMaxAgeSeconds); ok {
 		s.TargetAvailable = true
 		s.TargetSampleT = sample.T
 		s.TargetSampleAge = t - sample.T
 		s.TargetX = sample.X
 		s.TargetY = sample.Y
-		s.TargetAlive = sample.Alive
-		if sample.Alive {
-			s.NearbyAllies = waveTakingNearbyAlliesAt(tl, target.Team, target.PlayerSlot, t, sample.X, sample.Y)
-		}
+		s.TargetAlive = true
+		s.NearbyAllies = waveTakingNearbyAlliesAt(tl, target.Team, target.PlayerSlot, t, sample.X, sample.Y)
 		if geometryAvailable {
 			if projection, ok := projectLaneProgress(geometry, sample.X, sample.Y); ok {
 				s.LaneProgressAvailable = true
@@ -329,8 +328,8 @@ func waveTakingNearbyAlliesAt(tl *MatchTimeline, team, targetSlot int, t, target
 		if player == nil || player.PlayerSlot == targetSlot || player.Team != team {
 			continue
 		}
-		sample, ok := freshHeroSampleAtOrBefore(player, t, targetWaveDangerSampleMaxAgeSeconds)
-		if !ok || !sample.Alive {
+		sample, ok := freshLivingHeroSampleAtOrBefore(tl, player, t, targetWaveDangerSampleMaxAgeSeconds)
+		if !ok {
 			continue
 		}
 		out = append(out, WaveTakingNearbyAlly{
