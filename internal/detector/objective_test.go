@@ -6,7 +6,7 @@ import (
 	"github.com/ap0calypse644/git_gud/internal/timeline"
 )
 
-func TestAssessObjectiveMissEmitsConservativeKnownRoshanCandidate(t *testing.T) {
+func TestAssessObjectiveMissEmitsConservativeKnownObjectiveCandidate(t *testing.T) {
 	tl, ctx := baseObjectiveFixture()
 	assessment := assessObjectiveMiss(tl, ctx)
 	if !assessment.Candidate {
@@ -15,8 +15,19 @@ func TestAssessObjectiveMissEmitsConservativeKnownRoshanCandidate(t *testing.T) 
 	if !assessment.Evidence.EnemyMapOpened || len(assessment.Evidence.EnemyTier1sDestroyedAtEnd) != 1 || assessment.Evidence.EnemyTier1sDestroyedAtEnd[0] != "mid" {
 		t.Fatalf("map evidence = %#v", assessment.Evidence)
 	}
+	if len(assessment.Evidence.EnemyFrontTowerOptions) != 3 {
+		t.Fatalf("front tower options = %#v, want 3", assessment.Evidence.EnemyFrontTowerOptions)
+	}
+	if assessment.Evidence.EnemyFrontTowerOptions[0] != (ObjectiveTowerOption{Lane: "bottom", Tier: 1}) ||
+		assessment.Evidence.EnemyFrontTowerOptions[1] != (ObjectiveTowerOption{Lane: "mid", Tier: 2}) ||
+		assessment.Evidence.EnemyFrontTowerOptions[2] != (ObjectiveTowerOption{Lane: "top", Tier: 1}) {
+		t.Fatalf("unexpected front tower options = %#v", assessment.Evidence.EnemyFrontTowerOptions)
+	}
 	if assessment.Evidence.RoshanKnowledgeState != "known_alive_from_game_start" || !assessment.Evidence.RoshanKnownAliveForDecision {
 		t.Fatalf("Roshan evidence = %#v", assessment.Evidence)
+	}
+	if assessment.Evidence.KnownObjectiveOptionCount != 4 || !assessment.Evidence.KnownObjectiveOptions {
+		t.Fatalf("objective option evidence = %#v", assessment.Evidence)
 	}
 	if !assessment.Evidence.EnemyDeathWindowEndStateAvailable || assessment.Evidence.EnemyDeathsStillDeadAtWindowEnd != 1 {
 		t.Fatalf("power-play evidence = %#v", assessment.Evidence)
@@ -25,9 +36,7 @@ func TestAssessObjectiveMissEmitsConservativeKnownRoshanCandidate(t *testing.T) 
 
 func TestAssessObjectiveMissSuppressesEnemyRespawnedBeforeWindowEnd(t *testing.T) {
 	tl, ctx := baseObjectiveFixture()
-	tl.Players["128"].Samples = append(tl.Players["128"].Samples,
-		timeline.HeroSample{T: 150, Alive: true},
-	)
+	tl.Players["128"].Samples[1].Alive = true
 	assessment := assessObjectiveMiss(tl, ctx)
 	if assessment.Candidate {
 		t.Fatalf("respawned enemy emitted candidate: %#v", assessment)
@@ -50,7 +59,7 @@ func TestAssessObjectiveMissSuppressesAmbiguousEnemyDeathState(t *testing.T) {
 	}
 }
 
-func TestAssessObjectiveMissSuppressesHiddenRespawn(t *testing.T) {
+func TestAssessObjectiveMissDoesNotLeakHiddenRoshanRespawnWhenTowerOptionExists(t *testing.T) {
 	tl, ctx := baseObjectiveFixture()
 	ctx.RoshanAtEnd = timeline.RoshanPostFightState{
 		ReplayStateAvailable:  true,
@@ -59,11 +68,36 @@ func TestAssessObjectiveMissSuppressesHiddenRespawn(t *testing.T) {
 		KnownAliveForDecision: false,
 	}
 	assessment := assessObjectiveMiss(tl, ctx)
-	if assessment.Candidate {
-		t.Fatalf("hidden respawn emitted candidate: %#v", assessment)
+	if !assessment.Candidate {
+		t.Fatalf("known tower options should still support candidate: %#v", assessment)
 	}
 	if assessment.Evidence.RoshanKnownAliveForDecision {
 		t.Fatalf("hidden respawn leaked into decision evidence: %#v", assessment.Evidence)
+	}
+	if assessment.Evidence.KnownObjectiveOptionCount != 3 {
+		t.Fatalf("hidden Roshan should not count as objective option: %#v", assessment.Evidence)
+	}
+}
+
+func TestAssessObjectiveMissSuppressesWhenNoObjectiveKnownAvailable(t *testing.T) {
+	tl, ctx := baseObjectiveFixture()
+	ctx.RoshanAtEnd = timeline.RoshanPostFightState{
+		ReplayStateAvailable:  true,
+		WorldState:            "alive",
+		KnowledgeState:        "unknown_after_random_respawn",
+		KnownAliveForDecision: false,
+	}
+	for i := range ctx.EnemyLaneStructuresAtEnd {
+		ctx.EnemyLaneStructuresAtEnd[i].Tier1KnownAlive = false
+		ctx.EnemyLaneStructuresAtEnd[i].Tier2KnownAlive = false
+		ctx.EnemyLaneStructuresAtEnd[i].Tier3KnownAlive = false
+	}
+	assessment := assessObjectiveMiss(tl, ctx)
+	if assessment.Candidate {
+		t.Fatalf("unknown objective availability emitted candidate: %#v", assessment)
+	}
+	if assessment.Evidence.KnownObjectiveOptions || assessment.Evidence.KnownObjectiveOptionCount != 0 {
+		t.Fatalf("objective availability = %#v, want none", assessment.Evidence)
 	}
 }
 
@@ -103,6 +137,18 @@ func TestAssessObjectiveMissSuppressesBeforeEnemyMapOpened(t *testing.T) {
 	}
 	if assessment.Evidence.EnemyMapOpened {
 		t.Fatalf("map evidence = %#v, want closed", assessment.Evidence)
+	}
+}
+
+func TestObjectiveFrontTowerRequiresCausalLaneProgression(t *testing.T) {
+	if got, ok := objectiveFrontTower(timeline.LaneStructureState{Lane: "mid", Tier2KnownAlive: true}); ok {
+		t.Fatalf("unexposed T2 accepted: %#v", got)
+	}
+	if got, ok := objectiveFrontTower(timeline.LaneStructureState{Lane: "mid", Tier1Destroyed: true, Tier2KnownAlive: true}); !ok || got.Tier != 2 {
+		t.Fatalf("exposed T2 = %#v ok=%v, want tier 2", got, ok)
+	}
+	if got, ok := objectiveFrontTower(timeline.LaneStructureState{Lane: "mid", Tier1Destroyed: true, Tier2Destroyed: true, Tier3KnownAlive: true}); !ok || got.Tier != 3 {
+		t.Fatalf("exposed T3 = %#v ok=%v, want tier 3", got, ok)
 	}
 }
 
@@ -146,9 +192,22 @@ func baseObjectiveFixture() (*timeline.MatchTimeline, timeline.PostFightObjectiv
 		AlliedEndSamplesAvailable: 5,
 		AlliedHeroesAliveAtEnd:    5,
 		EnemyLaneStructuresAtEnd: []timeline.LaneStructureState{
-			{Team: 3, Lane: "top", T: 120, Tier1Destroyed: false},
-			{Team: 3, Lane: "mid", T: 120, Tier1Destroyed: true},
-			{Team: 3, Lane: "bottom", T: 120, Tier1Destroyed: false},
+			{
+				Team: 3, Lane: "top", T: 120,
+				Tier1PresentAtStart: true, Tier2PresentAtStart: true, Tier3PresentAtStart: true,
+				Tier1KnownAlive: true, Tier2KnownAlive: true, Tier3KnownAlive: true,
+			},
+			{
+				Team: 3, Lane: "mid", T: 120,
+				Tier1PresentAtStart: true, Tier2PresentAtStart: true, Tier3PresentAtStart: true,
+				Tier1Destroyed: true, Tier1DestroyedAt: float64Ptr(90),
+				Tier2KnownAlive: true, Tier3KnownAlive: true,
+			},
+			{
+				Team: 3, Lane: "bottom", T: 120,
+				Tier1PresentAtStart: true, Tier2PresentAtStart: true, Tier3PresentAtStart: true,
+				Tier1KnownAlive: true, Tier2KnownAlive: true, Tier3KnownAlive: true,
+			},
 		},
 		RoshanAtEnd: timeline.RoshanPostFightState{
 			ReplayStateAvailable:  true,
@@ -161,3 +220,5 @@ func baseObjectiveFixture() (*timeline.MatchTimeline, timeline.PostFightObjectiv
 	}
 	return tl, ctx
 }
+
+func float64Ptr(v float64) *float64 { return &v }
