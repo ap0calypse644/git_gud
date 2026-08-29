@@ -18,6 +18,7 @@ type MatchTimeline struct {
 	Fights              []FightWindow                `json:"fights,omitempty"`
 	CreepClusters       CreepClusterTimeline         `json:"creep_clusters"`
 	LaneWaves           LaneWaveTimeline             `json:"lane_waves"`
+	LaneTowerPositions  []LaneTowerPosition          `json:"-"`
 	LaneStructures      LaneStructureTimeline        `json:"lane_structures"`
 	TargetWaveTaking    TargetWaveTakingTimeline     `json:"target_wave_taking"`
 	TargetWaveDanger    TargetWaveDangerTimeline     `json:"target_wave_danger"`
