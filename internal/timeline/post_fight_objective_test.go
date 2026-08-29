@@ -71,6 +71,54 @@ func TestDerivePostFightObjectiveTimelineUsesNextFightBoundary(t *testing.T) {
 	}
 }
 
+func TestNextPostFightBoundaryIgnoresFightSliceOrder(t *testing.T) {
+	tl := MatchTimeline{
+		DurationSeconds: 100,
+		Fights: []FightWindow{
+			{ObservedStartT: 10, ObservedEndT: 20},
+			{ObservedStartT: 60, ObservedEndT: 70},
+			{ObservedStartT: 40, ObservedEndT: 50},
+		},
+	}
+
+	end, reason := nextPostFightBoundary(&tl, 0, 20)
+	if end != 40 || reason != "next_fight_start" {
+		t.Fatalf("boundary = (%v, %q), want (40, next_fight_start)", end, reason)
+	}
+}
+
+func TestNextPostFightBoundaryClosesWhenAnotherFightStillActive(t *testing.T) {
+	tl := MatchTimeline{
+		DurationSeconds: 100,
+		Fights: []FightWindow{
+			{ObservedStartT: 20, ObservedEndT: 40},
+			{ObservedStartT: 25, ObservedEndT: 30},
+			{ObservedStartT: 60, ObservedEndT: 70},
+		},
+	}
+
+	end, reason := nextPostFightBoundary(&tl, 1, 30)
+	if end != 30 || reason != "overlapping_fight_active" {
+		t.Fatalf("boundary = (%v, %q), want (30, overlapping_fight_active)", end, reason)
+	}
+}
+
+func TestNextPostFightBoundaryTreatsFightStartingAtEndAsImmediateBoundary(t *testing.T) {
+	tl := MatchTimeline{
+		DurationSeconds: 100,
+		Fights: []FightWindow{
+			{ObservedStartT: 10, ObservedEndT: 20},
+			{ObservedStartT: 20, ObservedEndT: 20},
+			{ObservedStartT: 50, ObservedEndT: 60},
+		},
+	}
+
+	end, reason := nextPostFightBoundary(&tl, 0, 20)
+	if end != 20 || reason != "next_fight_start" {
+		t.Fatalf("boundary = (%v, %q), want (20, next_fight_start)", end, reason)
+	}
+}
+
 func TestRoshanPostFightStateDoesNotPromoteHiddenRespawnToKnowledge(t *testing.T) {
 	objectives := []ObjectiveEvent{
 		{T: 0, Type: "roshan_alive_at_start"},
