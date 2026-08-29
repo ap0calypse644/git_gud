@@ -77,8 +77,15 @@ func TestRoshanKillAlignmentUsesPauseAwareAbsoluteTime(t *testing.T) {
 	out := MatchTimeline{Objectives: []ObjectiveEvent{{T: combatLogT, Type: "roshan_kill"}}}
 	collector.apply(&out, gameStartTime)
 
-	if out.Objectives[0].AttackerTeam != 3 {
-		t.Fatalf("attacker team = %d, want 3", out.Objectives[0].AttackerTeam)
+	var kill *ObjectiveEvent
+	for i := range out.Objectives {
+		if out.Objectives[i].Type == "roshan_kill" {
+			kill = &out.Objectives[i]
+			break
+		}
+	}
+	if kill == nil || kill.AttackerTeam != 3 {
+		t.Fatalf("Roshan kill = %#v, want attacker_team 3", kill)
 	}
 }
 
