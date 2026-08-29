@@ -57,11 +57,43 @@ func TestOpenAIReporterGenerateUsesOnlyCompactInputAndStructuredSchema(t *testin
 		if !ok || format["type"] != "json_schema" || format["strict"] != true {
 			t.Fatalf("format=%#v", text["format"])
 		}
+		schema, ok := format["schema"].(map[string]any)
+		if !ok {
+			t.Fatalf("schema=%#v", format["schema"])
+		}
+		encodedSchema, err := json.Marshal(schema)
+		if err != nil {
+			t.Fatalf("marshal schema: %v", err)
+		}
+		for _, field := range []string{"decision_time_facts", "retrospective_outcomes"} {
+			if !strings.Contains(string(encodedSchema), field) {
+				t.Errorf("structured schema missing %q: %s", field, encodedSchema)
+			}
+		}
 
 		messages, ok := request["input"].([]any)
 		if !ok || len(messages) != 2 {
 			t.Fatalf("input messages=%#v", request["input"])
 		}
+		systemMessage, ok := messages[0].(map[string]any)
+		if !ok {
+			t.Fatalf("system message=%#v", messages[0])
+		}
+		systemContent, ok := systemMessage["content"].(string)
+		if !ok {
+			t.Fatalf("system content=%#v", systemMessage["content"])
+		}
+		for _, required := range []string{
+			"retrospective_outcomes",
+			"never use retrospective outcomes to claim the player should have predicted",
+			"Do not quote support_radius_timeline or nearest_ally_distance",
+			"buyback state",
+		} {
+			if !strings.Contains(systemContent, required) {
+				t.Errorf("system prompt missing %q", required)
+			}
+		}
+
 		userMessage, ok := messages[1].(map[string]any)
 		if !ok {
 			t.Fatalf("user message=%#v", messages[1])
@@ -85,13 +117,14 @@ func TestOpenAIReporterGenerateUsesOnlyCompactInputAndStructuredSchema(t *testin
 			Summary:    "One lane decision deserves review.",
 			Priorities: []string{"Disengage after the wave when the next step is unclear."},
 			Moments: []modelCoachingReportMoment{{
-				SourceMomentIndexes: []int{0},
-				Assessment:          "likely_mistake",
-				Title:               "Stayed after the wave was cleared",
-				DeterministicFacts:  []string{"The post-clear exposure continued for six seconds."},
-				Interpretation:      "Continuing forward likely increased the chance of being forced into combat.",
-				Alternative:         "Reset after the clear instead of continuing the lane exposure.",
-				WhyItMatters:        "A clean reset preserves farm tempo and reduces unnecessary risk.",
+				SourceMomentIndexes:   []int{0},
+				Assessment:            "likely_mistake",
+				Title:                 "Stayed after the wave was cleared",
+				DecisionTimeFacts:     []string{"The post-clear exposure continued after the wave clear."},
+				RetrospectiveOutcomes: []string{"The later replay outcome was a death."},
+				Interpretation:        "Continuing forward likely increased the chance of being forced into combat.",
+				Alternative:           "Reset after the clear instead of continuing the lane exposure.",
+				WhyItMatters:          "A clean reset preserves farm tempo and reduces unnecessary risk.",
 			}},
 		})
 		if err != nil {
@@ -127,6 +160,9 @@ func TestOpenAIReporterGenerateUsesOnlyCompactInputAndStructuredSchema(t *testin
 	}
 	if len(report.Moments[0].SourceConfidences) != 1 || report.Moments[0].SourceConfidences[0] != "low" {
 		t.Fatalf("source confidence=%v", report.Moments[0].SourceConfidences)
+	}
+	if len(report.Moments[0].DecisionTimeFacts) != 1 || len(report.Moments[0].RetrospectiveOutcomes) != 1 {
+		t.Fatalf("temporal fact split=%#v", report.Moments[0])
 	}
 }
 
