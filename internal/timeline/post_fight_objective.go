@@ -2,7 +2,7 @@ package timeline
 
 import "sort"
 
-const postFightObjectiveMethod = "observed_fight_deaths_objective_events_and_causal_roshan_knowledge_v1"
+const postFightObjectiveMethod = "observed_fight_deaths_objective_events_and_causal_roshan_knowledge_v2"
 
 // PostFightObjectiveTimeline is evidence-only context for what happened after
 // each consolidated fight. It deliberately does not claim that an objective
@@ -13,17 +13,19 @@ type PostFightObjectiveTimeline struct {
 	Contexts  []PostFightObjectiveContext `json:"contexts"`
 }
 
-// PostFightObjectiveContext starts at the final observed combat moment of one
-// fight and ends at the next observed fight start (or match end). This avoids a
-// hand-tuned number of seconds for an "objective window" while preserving the
-// actual quiet period available for later calibration. If another distinct
-// fight is already active at this fight's observed end, there is no clean
-// post-fight interval and the window closes immediately.
+// PostFightObjectiveContext keeps the observed combat bounds for attribution,
+// but defines clean conversion time from the end of the consolidated fight
+// envelope to the beginning of the next consolidated fight envelope. This
+// reuses the fight detector's existing lead/trail semantics instead of
+// inventing a second timing threshold. If another distinct fight envelope is
+// already active when the current envelope ends, there is no clean post-fight
+// interval and the window closes immediately.
 type PostFightObjectiveContext struct {
 	FightIndex              int     `json:"fight_index"`
 	ObservedTimingAvailable bool    `json:"observed_timing_available"`
 	FightObservedStartT     float64 `json:"fight_observed_start_t,omitempty"`
 	FightObservedEndT       float64 `json:"fight_observed_end_t,omitempty"`
+	WindowStartT            float64 `json:"window_start_t,omitempty"`
 	WindowEndT              float64 `json:"window_end_t,omitempty"`
 	WindowEndReason         string  `json:"window_end_reason,omitempty"` // next_fight_start | overlapping_fight_active | match_end
 	WindowDurationSeconds   float64 `json:"window_duration_seconds"`
@@ -110,16 +112,22 @@ func DerivePostFightObjectiveTimeline(tl *MatchTimeline) PostFightObjectiveTimel
 
 		ctx.FightObservedStartT = fight.ObservedStartT
 		ctx.FightObservedEndT = fight.ObservedEndT
-		ctx.WindowEndT, ctx.WindowEndReason = nextPostFightBoundary(tl, fightIndex, fight.ObservedEndT)
-		if ctx.WindowEndT < fight.ObservedEndT {
-			ctx.WindowEndT = fight.ObservedEndT
+		_, ctx.WindowStartT = postFightEnvelopeBounds(fight)
+		if ctx.WindowStartT < fight.ObservedEndT {
+			ctx.WindowStartT = fight.ObservedEndT
 		}
-		ctx.WindowDurationSeconds = ctx.WindowEndT - fight.ObservedEndT
+		ctx.WindowEndT, ctx.WindowEndReason = nextPostFightBoundary(tl, fightIndex, ctx.WindowStartT)
+		if ctx.WindowEndT < ctx.WindowStartT {
+			ctx.WindowEndT = ctx.WindowStartT
+		}
+		ctx.WindowDurationSeconds = ctx.WindowEndT - ctx.WindowStartT
 
 		populatePostFightDeaths(tl, fightIndex, target.Team, &ctx)
 		populatePostFightAlliedState(tl, target.Team, tl.TargetPlayerSlot, fight.ObservedEndT, &ctx)
 		ctx.EnemyLaneStructuresAtEnd = enemyLaneStructureStatesAt(tl, target.Team, fight.ObservedEndT)
 		ctx.RoshanAtEnd = roshanPostFightStateAt(tl.Objectives, fight.ObservedEndT)
+		// A conversion immediately after the last observed combat moment still
+		// counts even if it occurs inside the fight detector's trailing envelope.
 		populatePostFightConversions(tl.Objectives, target.Team, fight.ObservedEndT, ctx.WindowEndT, ctx.WindowEndReason, &ctx)
 		out.Contexts = append(out.Contexts, ctx)
 	}
@@ -136,15 +144,28 @@ func DerivePostFightObjectiveTimeline(tl *MatchTimeline) PostFightObjectiveTimel
 	return out
 }
 
+// postFightEnvelopeBounds returns the consolidated fight detector envelope when
+// it is structurally valid and contains the observed combat interval. Older or
+// synthetic timelines without StartT/EndT fall back to observed bounds.
+func postFightEnvelopeBounds(fight FightWindow) (float64, float64) {
+	if fight.EndT >= fight.StartT &&
+		fight.StartT <= fight.ObservedStartT &&
+		fight.EndT >= fight.ObservedEndT &&
+		!(fight.StartT == 0 && fight.EndT == 0 && (fight.ObservedStartT != 0 || fight.ObservedEndT != 0)) {
+		return fight.StartT, fight.EndT
+	}
+	return fight.ObservedStartT, fight.ObservedEndT
+}
+
 // nextPostFightBoundary is deliberately independent of tl.Fights slice order.
 // Consolidated fights can overlap spatially and are not guaranteed to be
-// ordered by observed timing. A clean post-fight objective interval therefore
-// exists only if no other fight remains active at endT. Otherwise the window
-// closes at endT. When the map is quiet at endT, choose the earliest observed
-// start at or after endT across every other fight.
-func nextPostFightBoundary(tl *MatchTimeline, fightIndex int, endT float64) (float64, string) {
+// ordered by timing. A clean post-fight objective interval therefore exists
+// only if no other consolidated fight envelope remains active at startT.
+// Otherwise the window closes at startT. When the map is quiet at startT,
+// choose the earliest other fight-envelope start at or after startT.
+func nextPostFightBoundary(tl *MatchTimeline, fightIndex int, startT float64) (float64, string) {
 	if tl == nil {
-		return endT, "match_end"
+		return startT, "match_end"
 	}
 
 	boundary := tl.DurationSeconds
@@ -153,12 +174,13 @@ func nextPostFightBoundary(tl *MatchTimeline, fightIndex int, endT float64) (flo
 		if i == fightIndex || !observedFightTimingAvailable(fight) {
 			continue
 		}
+		otherStart, otherEnd := postFightEnvelopeBounds(fight)
 
-		if fight.ObservedStartT < endT && fight.ObservedEndT > endT {
-			return endT, "overlapping_fight_active"
+		if otherStart < startT && otherEnd > startT {
+			return startT, "overlapping_fight_active"
 		}
-		if fight.ObservedStartT >= endT && fight.ObservedStartT < boundary {
-			boundary = fight.ObservedStartT
+		if otherStart >= startT && otherStart < boundary {
+			boundary = otherStart
 			reason = "next_fight_start"
 		}
 	}
