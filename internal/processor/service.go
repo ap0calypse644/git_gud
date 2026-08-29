@@ -237,6 +237,13 @@ func (s *Service) Process(ctx context.Context, matchID int64, force bool) (Resul
 }
 
 func (s *Service) continueFromTimeline(ctx context.Context, state storage.State, m *storage.MatchState, match opendota.Match) (Result, error) {
+	if s.patterns == nil && s.coach == nil {
+		if err := s.store.Save(state); err != nil {
+			return Result{}, err
+		}
+		return resultForState(match, m), nil
+	}
+
 	input, err := s.loadCoachingInput(m)
 	if err != nil {
 		m.LastError = err.Error()
