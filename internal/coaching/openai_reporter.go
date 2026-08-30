@@ -14,7 +14,7 @@ import (
 const (
 	defaultOpenAIBaseURL         = "https://api.openai.com/v1"
 	defaultOpenAIModel           = "gpt-5.6-terra"
-	defaultReportMaxOutputTokens = 3000
+	defaultReportMaxOutputTokens = 6000
 )
 
 // ReportGenerator is the Phase G boundary. Implementations receive only the
