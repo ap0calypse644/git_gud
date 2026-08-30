@@ -18,18 +18,19 @@ import (
 type PendingMatch struct {
 	MatchID     int64
 	Status      storage.MatchStatus
+	RetryCount  int
 	NextRetryAt *time.Time
 	LastError   string
 }
 
 type StatusSnapshot struct {
-	Initialized      bool
-	LastSeenMatchID  int64
-	TrackedMatches   int
-	PendingMatches   int
-	PatternRecorded  int
-	StatusCounts     map[storage.MatchStatus]int
-	Pending          []PendingMatch
+	Initialized     bool
+	LastSeenMatchID int64
+	TrackedMatches  int
+	PendingMatches  int
+	PatternRecorded int
+	StatusCounts    map[storage.MatchStatus]int
+	Pending         []PendingMatch
 }
 
 type HistoryEntry struct {
@@ -62,8 +63,17 @@ func BuildStatus(state storage.State, retryInterval time.Duration, coachingEnabl
 		if !isPending(match, coachingEnabled, patternsEnabled) {
 			continue
 		}
-		pending := PendingMatch{MatchID: match.MatchID, Status: match.Status, LastError: match.LastError}
-		if match.LastAttemptAt != nil && retryInterval > 0 {
+		pending := PendingMatch{
+			MatchID:    match.MatchID,
+			Status:     match.Status,
+			RetryCount: match.RetryCount,
+			LastError:  match.LastError,
+		}
+		if match.NextRetryAt != nil && match.NextRetryAt.After(now) {
+			retryAt := *match.NextRetryAt
+			pending.NextRetryAt = &retryAt
+		} else if match.NextRetryAt == nil && match.LastAttemptAt != nil && retryInterval > 0 {
+			// Backward-compatible display for pre-backoff state files.
 			retryAt := match.LastAttemptAt.Add(retryInterval)
 			if retryAt.After(now) {
 				pending.NextRetryAt = &retryAt
@@ -100,7 +110,7 @@ func WriteStatus(w io.Writer, snapshot StatusSnapshot) error {
 		if pending.NextRetryAt != nil {
 			retry = pending.NextRetryAt.UTC().Format(time.RFC3339)
 		}
-		fmt.Fprintf(w, "pending.%d: status=%s retry=%s", pending.MatchID, pending.Status, retry)
+		fmt.Fprintf(w, "pending.%d: status=%s retry=%s retry_count=%d", pending.MatchID, pending.Status, retry, pending.RetryCount)
 		if strings.TrimSpace(pending.LastError) != "" {
 			fmt.Fprintf(w, " error=%q", pending.LastError)
 		}
