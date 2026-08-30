@@ -74,6 +74,30 @@ To perform one automatic discovery/processing cycle and exit:
 go run ./cmd/git-gud -config config.json -once
 ```
 
+## Operational inspection
+
+The following commands are read-only. They load local state and artifacts and exit before constructing OpenDota, replay, watcher, or OpenAI clients.
+
+Show watcher state, status counts, pending matches, retry readiness, and the latest persisted error for each pending match:
+
+```bash
+go run ./cmd/git-gud -config config.json -status
+```
+
+Show the most recent tracked matches. When a report exists, the output includes its hero and one-line summary:
+
+```bash
+go run ./cmd/git-gud -config config.json -history 10
+```
+
+Print one persisted structured coaching report without reprocessing the match:
+
+```bash
+go run ./cmd/git-gud -config config.json -report 8962145737
+```
+
+Only one execution mode may be selected at a time: `-once`, `-match`, `-status`, `-history`, or `-report`.
+
 ## State machine
 
 ```text
