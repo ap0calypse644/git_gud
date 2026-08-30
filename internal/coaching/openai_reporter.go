@@ -14,7 +14,7 @@ import (
 const (
 	defaultOpenAIBaseURL         = "https://api.openai.com/v1"
 	defaultOpenAIModel           = "gpt-5.6-terra"
-	defaultReportMaxOutputTokens = 3000
+	defaultReportMaxOutputTokens = 16000
 )
 
 // ReportGenerator is the Phase G boundary. Implementations receive only the
@@ -111,6 +111,9 @@ func (r *OpenAIReporter) Generate(ctx context.Context, input MatchCoachingInput)
 		"model":             r.Model,
 		"store":             false,
 		"max_output_tokens": maxOutputTokens,
+		"reasoning": map[string]any{
+			"effort": "low",
+		},
 		"input": []map[string]string{
 			{"role": "system", "content": coachingReportSystemPrompt},
 			{"role": "user", "content": "MatchCoachingInput-derived evidence. Every moment has an explicit source_moment_id. Never refer to moments by array position; copy the exact source_moment_id of every moment whose evidence you use.\n" + string(inputJSON)},
@@ -225,6 +228,8 @@ const coachingReportSystemPrompt = `You are a Dota 2 replay coaching reviewer.
 
 You receive ONLY detector-normalized MatchCoachingInput-derived evidence. Treat it as the complete evidence available to you. Never invent or infer exact enemy locations, hidden vision, wards, player intent, map coordinates, buyback state, cooldowns, resources, or any other replay fact that is not explicitly present in the input.
 
+You may suggest or compare plausible actions, but do not label the player's intent or mental state with terms such as panic, greed, desperation, tunnel vision, bait, chase, or deliberate sacrifice unless the input explicitly establishes that intent. Phrase uncertain motivation as a coaching question or omit it.
+
 Each input moment has a unique source_moment_id. Treat that ID as part of the evidence record. Never refer to a moment by its array position. For every fact or conclusion you use, copy the exact source_moment_id of the moment that supplied that evidence into source_moment_ids. Do not copy facts from a neighboring moment under another moment's ID.
 
 Each input moment is a review target, not proof of a mistake. Preserve that uncertainty. The output assessment may be "review", "likely_mistake", or "probably_reasonable"; never describe a candidate as definitively wrong merely because a detector emitted it.
@@ -241,6 +246,10 @@ Strict temporal rule:
 - why_it_matters may mention retrospective outcomes, clearly as hindsight consequence.
 
 Key-ability review moments are deliberately emitted for supported casts whether the later result is good, bad, or ambiguous. A later death does not make the cast bad, and a later enemy death does not automatically make it good. Use pre-cast state for the decision assessment and later damage/deaths only as retrospective outcome. It is valid to assess a supported cast as probably_reasonable when the supplied decision-time evidence supports that conclusion.
+
+For key-ability evidence, fields named target_hp_latest_sample_before_cast, target_max_hp_latest_sample_before_cast, and target_hp_pct_latest_sample_before_cast are the latest replay sample observed at or before the cast. They are not guaranteed to be synchronized exactly with cast_t or with every event inside pre_cast_window_seconds. Never subtract target_damage_received_before_cast from that sampled HP or otherwise reconstruct an exact cast-time HP, exact damage-backtrack amount, or exact heal amount from those fields.
+
+For faceless_void_time_walk review moments, a 2-second pre-cast window represents the damage-backtrack window used by this detector. These moments describe an observed Time Walk cast after meaningful recent incoming damage; they do not establish that Time Walk was available earlier or later, that it should have been cast sooner, or that the cast destination was good or bad. Never infer cooldown, mana, destination, Reverse Time Walk availability, or an exact amount healed. Substantial target_damage_received_before_cast can support a probably_reasonable recovery cast rather than a mistake. target_damage_received_after_cast and later deaths are retrospective outcomes only.
 
 If you select a key-ability review or mechanic-level interaction and the input contains other casts of that same key ability, reserve one report slot for one contrasting cast when the evidence supports a useful comparison. The comparison exists to calibrate the coaching, not to reward or punish the later outcome. Choose a cast with meaningfully different supplied context or consequence, keep later damage/deaths retrospective, and assess it as review or probably_reasonable only when its decision-time evidence supports that wording. Do not drop this calibration cast merely to add another generic repeated low-confidence symptom.
 
