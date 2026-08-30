@@ -88,7 +88,7 @@ func BuildMatchCoachingInput(tl *timeline.MatchTimeline) MatchCoachingInput {
 
 	keyAbilityAnalysis := detector.AnalyzeKeyAbilities(tl)
 	for _, candidate := range keyAbilityAnalysis.Candidates {
-		evidence, t, ok := keyAbilityCandidateEvidence(candidate)
+		evidence, t, ok := keyAbilityCandidateEvidence(tl, candidate)
 		if !ok {
 			continue
 		}
@@ -225,7 +225,7 @@ func objectiveCandidateEvidence(candidate detector.ObjectiveCandidate) (PostFigh
 	return evidence, source.FightObservedStartT, source.WindowEndT, true
 }
 
-func keyAbilityCandidateEvidence(candidate detector.KeyAbilityCandidate) (any, float64, bool) {
+func keyAbilityCandidateEvidence(tl *timeline.MatchTimeline, candidate detector.KeyAbilityCandidate) (any, float64, bool) {
 	switch candidate.Type {
 	case detector.TypeKeyAbilityUseReviewCandidate:
 		if candidate.KeyAbility == nil {
@@ -263,7 +263,50 @@ func keyAbilityCandidateEvidence(candidate detector.KeyAbilityCandidate) (any, f
 			TargetDeathT:                   copyFloat64(source.TargetDeathT),
 			TargetDeathInflictor:           source.TargetDeathInflictor,
 		}
-		return evidence, source.CastT, true
+		if source.Ability != "faceless_void_chronosphere" {
+			return evidence, source.CastT, true
+		}
+
+		context, ok := detector.ChronosphereCombatContextAt(tl, source.CastT)
+		if !ok || !finite(context.FollowupWindowSeconds) || context.FollowupWindowSeconds <= 0 ||
+			context.FollowupWindowEqualsSpellDuration || context.CaughtHeroesConfirmedFromReplay || context.CastPlacementConfirmedFromReplay ||
+			context.RecentEnemyInteractorsBeforeCast < 0 || context.RecentAlliedTeammatesInteractingWithSameEnemies < 0 ||
+			context.TargetEnemyHeroesDamagedInFollowup < 0 || context.TargetHeroDamageInFollowup < 0 ||
+			context.AlliedTeammatesDamagingTargetVictimsInFollowup < 0 || context.AlliedHeroDamageToTargetVictimsInFollowup < 0 {
+			return nil, 0, false
+		}
+		if context.SecondsToFirstTargetHeroDamageAfterCast != nil &&
+			(!finite(*context.SecondsToFirstTargetHeroDamageAfterCast) || *context.SecondsToFirstTargetHeroDamageAfterCast <= 0 || *context.SecondsToFirstTargetHeroDamageAfterCast > context.FollowupWindowSeconds) {
+			return nil, 0, false
+		}
+		if context.TargetEnemyHeroesDamagedInFollowup == 0 {
+			if context.TargetHeroDamageInFollowup != 0 || context.SecondsToFirstTargetHeroDamageAfterCast != nil ||
+				context.AlliedTeammatesDamagingTargetVictimsInFollowup != 0 || context.AlliedHeroDamageToTargetVictimsInFollowup != 0 {
+				return nil, 0, false
+			}
+		} else if context.TargetHeroDamageInFollowup <= 0 || context.SecondsToFirstTargetHeroDamageAfterCast == nil {
+			return nil, 0, false
+		}
+		if (context.AlliedTeammatesDamagingTargetVictimsInFollowup == 0) != (context.AlliedHeroDamageToTargetVictimsInFollowup == 0) {
+			return nil, 0, false
+		}
+
+		return ChronosphereKeyAbilityReviewEvidence{
+			KeyAbilityReviewEvidence: evidence,
+			ChronosphereFollowup: ChronosphereFollowupReviewEvidence{
+				FollowupWindowSeconds:                           context.FollowupWindowSeconds,
+				FollowupWindowEqualsSpellDuration:               context.FollowupWindowEqualsSpellDuration,
+				CaughtHeroesConfirmedFromReplay:                 context.CaughtHeroesConfirmedFromReplay,
+				CastPlacementConfirmedFromReplay:                context.CastPlacementConfirmedFromReplay,
+				RecentEnemyInteractorsBeforeCast:                context.RecentEnemyInteractorsBeforeCast,
+				RecentAlliedTeammatesInteractingWithSameEnemies: context.RecentAlliedTeammatesInteractingWithSameEnemies,
+				TargetEnemyHeroesDamagedInFollowup:              context.TargetEnemyHeroesDamagedInFollowup,
+				TargetHeroDamageInFollowup:                      context.TargetHeroDamageInFollowup,
+				AlliedTeammatesDamagingTargetVictimsInFollowup:  context.AlliedTeammatesDamagingTargetVictimsInFollowup,
+				AlliedHeroDamageToTargetVictimsInFollowup:       context.AlliedHeroDamageToTargetVictimsInFollowup,
+				SecondsToFirstTargetHeroDamageAfterCast:          copyFloat64(context.SecondsToFirstTargetHeroDamageAfterCast),
+			},
+		}, source.CastT, true
 
 	case detector.TypeActiveDamageReflectInteractionCandidate:
 		if candidate.ActiveDamageReflect == nil {
