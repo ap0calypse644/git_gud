@@ -14,7 +14,7 @@ import (
 const (
 	defaultOpenAIBaseURL         = "https://api.openai.com/v1"
 	defaultOpenAIModel           = "gpt-5.6-terra"
-	defaultReportMaxOutputTokens = 6000
+	defaultReportMaxOutputTokens = 16000
 )
 
 // ReportGenerator is the Phase G boundary. Implementations receive only the
@@ -111,6 +111,9 @@ func (r *OpenAIReporter) Generate(ctx context.Context, input MatchCoachingInput)
 		"model":             r.Model,
 		"store":             false,
 		"max_output_tokens": maxOutputTokens,
+		"reasoning": map[string]any{
+			"effort": "low",
+		},
 		"input": []map[string]string{
 			{"role": "system", "content": coachingReportSystemPrompt},
 			{"role": "user", "content": "MatchCoachingInput-derived evidence. Every moment has an explicit source_moment_id. Never refer to moments by array position; copy the exact source_moment_id of every moment whose evidence you use.\n" + string(inputJSON)},
