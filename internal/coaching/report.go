@@ -44,7 +44,7 @@ type modelReportOutput struct {
 }
 
 type modelCoachingReportMoment struct {
-	SourceMomentIndexes   []int    `json:"source_moment_indexes"`
+	SourceMomentIDs       []string `json:"source_moment_ids"`
 	Assessment            string   `json:"assessment"`
 	Title                 string   `json:"title"`
 	DecisionTimeFacts     []string `json:"decision_time_facts"`
@@ -52,6 +52,10 @@ type modelCoachingReportMoment struct {
 	Interpretation        string   `json:"interpretation"`
 	Alternative           string   `json:"alternative"`
 	WhyItMatters          string   `json:"why_it_matters"`
+}
+
+func sourceMomentID(index int, moment CoachingMoment) string {
+	return fmt.Sprintf("m%03d_%s_%.3f", index, moment.Type, moment.StartT)
 }
 
 func buildMatchCoachingReport(input MatchCoachingInput, modelOutput modelReportOutput) (MatchCoachingReport, error) {
@@ -69,7 +73,7 @@ func buildMatchCoachingReport(input MatchCoachingInput, modelOutput modelReportO
 	usedSources := make(map[int]struct{})
 
 	for i, raw := range modelOutput.Moments {
-		indexes, err := normalizeSourceIndexes(raw.SourceMomentIndexes, len(input.Moments))
+		indexes, err := normalizeSourceIDs(raw.SourceMomentIDs, input)
 		if err != nil {
 			return MatchCoachingReport{}, fmt.Errorf("report moment %d: %w", i, err)
 		}
@@ -114,20 +118,30 @@ func buildMatchCoachingReport(input MatchCoachingInput, modelOutput modelReportO
 	return report, nil
 }
 
-func normalizeSourceIndexes(indexes []int, momentCount int) ([]int, error) {
-	if len(indexes) == 0 {
-		return nil, fmt.Errorf("source_moment_indexes must not be empty")
+func normalizeSourceIDs(ids []string, input MatchCoachingInput) ([]int, error) {
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("source_moment_ids must not be empty")
 	}
-	out := append([]int(nil), indexes...)
+
+	known := make(map[string]int, len(input.Moments))
+	for index, moment := range input.Moments {
+		known[sourceMomentID(index, moment)] = index
+	}
+
+	seen := make(map[string]struct{}, len(ids))
+	out := make([]int, 0, len(ids))
+	for _, id := range ids {
+		if _, exists := seen[id]; exists {
+			return nil, fmt.Errorf("duplicate source moment id %q", id)
+		}
+		seen[id] = struct{}{}
+		index, ok := known[id]
+		if !ok {
+			return nil, fmt.Errorf("unknown source moment id %q", id)
+		}
+		out = append(out, index)
+	}
 	sort.Ints(out)
-	for i, index := range out {
-		if index < 0 || index >= momentCount {
-			return nil, fmt.Errorf("source moment index %d out of range [0,%d)", index, momentCount)
-		}
-		if i > 0 && out[i-1] == index {
-			return nil, fmt.Errorf("duplicate source moment index %d", index)
-		}
-	}
 	return out, nil
 }
 
@@ -146,9 +160,9 @@ func coachingReportJSONSchema() map[string]any {
 	moment := map[string]any{
 		"type": "object",
 		"properties": map[string]any{
-			"source_moment_indexes": map[string]any{
+			"source_moment_ids": map[string]any{
 				"type":     "array",
-				"items":    map[string]any{"type": "integer", "minimum": 0},
+				"items":    map[string]any{"type": "string"},
 				"minItems": 1,
 			},
 			"assessment": map[string]any{
@@ -163,7 +177,7 @@ func coachingReportJSONSchema() map[string]any {
 			"why_it_matters":         map[string]any{"type": "string"},
 		},
 		"required": []string{
-			"source_moment_indexes",
+			"source_moment_ids",
 			"assessment",
 			"title",
 			"decision_time_facts",
