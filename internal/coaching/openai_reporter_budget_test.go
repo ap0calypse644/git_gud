@@ -7,7 +7,7 @@ import (
 
 func TestNewOpenAIReporterUsesExpandedDefaultOutputBudget(t *testing.T) {
 	reporter := NewOpenAIReporter("test-key", "test-model", &http.Client{})
-	if reporter.MaxOutputTokens != 6000 {
-		t.Fatalf("MaxOutputTokens = %d, want 6000", reporter.MaxOutputTokens)
+	if reporter.MaxOutputTokens != 16000 {
+		t.Fatalf("MaxOutputTokens = %d, want 16000", reporter.MaxOutputTokens)
 	}
 }
