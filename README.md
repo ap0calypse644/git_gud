@@ -9,11 +9,11 @@ The AI boundary is intentionally strict: the remote report generator receives on
 - Go 1.23+
 - A public OpenDota profile/match history
 - Internet access to OpenDota, Valve replay hosts, and the configured OpenAI API endpoint
-- `OPENAI_API_KEY` when coaching is enabled
+- `OPENAI_API_KEY` when a new coaching report must be generated
 
 An OpenDota API key is optional for the single-player use case and can be supplied in config or via `OPENDOTA_API_KEY`.
 
-The OpenAI key is environment-only and is not stored in `config.json`.
+The OpenAI key is environment-only and is not stored in `config.json`. Pattern-only backfills of already-coached matches do not require it.
 
 ## Quick start
 
@@ -125,7 +125,7 @@ See [`config.example.json`](config.example.json). Important defaults:
 
 OpenAI environment variables:
 
-- `OPENAI_API_KEY`: required when `coaching.enabled` is true
+- `OPENAI_API_KEY`: required only when a new coaching report is generated
 - `OPENAI_MODEL`: optional model override
 - `OPENAI_BASE_URL`: optional API base URL override
 
