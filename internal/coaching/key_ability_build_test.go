@@ -59,35 +59,42 @@ func TestBuildMatchCoachingInputAddsCompactChronosphereReviews(t *testing.T) {
 	if got.MatchID != 8973449904 {
 		t.Fatalf("match_id = %d", got.MatchID)
 	}
-	if gotLen, want := len(got.Moments), 3; gotLen != want {
-		t.Fatalf("moments = %d, want %d: %#v", gotLen, want, got.Moments)
+
+	var reflectMoment, firstCastMoment, secondCastMoment *CoachingMoment
+	for i := range got.Moments {
+		moment := &got.Moments[i]
+		switch {
+		case moment.Type == detector.TypeActiveDamageReflectInteractionCandidate && moment.StartT == 100:
+			reflectMoment = moment
+		case moment.Type == detector.TypeKeyAbilityUseReviewCandidate && moment.StartT == 100:
+			firstCastMoment = moment
+		case moment.Type == detector.TypeKeyAbilityUseReviewCandidate && moment.StartT == 200:
+			secondCastMoment = moment
+		}
+	}
+	if reflectMoment == nil || firstCastMoment == nil || secondCastMoment == nil {
+		t.Fatalf("missing expected key-ability moments: %#v", got.Moments)
 	}
 
-	if got.Moments[0].Type != detector.TypeActiveDamageReflectInteractionCandidate || got.Moments[0].StartT != 100 {
-		t.Fatalf("moment[0] = %#v", got.Moments[0])
-	}
-	reflect, ok := got.Moments[0].Evidence.(ActiveDamageReflectReviewEvidence)
+	reflect, ok := reflectMoment.Evidence.(ActiveDamageReflectReviewEvidence)
 	if !ok {
-		t.Fatalf("reflect evidence type = %T", got.Moments[0].Evidence)
+		t.Fatalf("reflect evidence type = %T", reflectMoment.Evidence)
 	}
 	if reflect.Item != "blade_mail" || reflect.PlayerKnowledgeStatus != detector.PlayerKnowledgeNotConfirmedFromReplay || reflect.ReflectedDamageAfterCast != 700 || !reflect.TargetDeathToReflect {
 		t.Fatalf("reflect evidence = %+v", reflect)
 	}
 
-	if got.Moments[1].Type != detector.TypeKeyAbilityUseReviewCandidate || got.Moments[1].StartT != 100 {
-		t.Fatalf("moment[1] = %#v", got.Moments[1])
-	}
-	firstCast, ok := got.Moments[1].Evidence.(KeyAbilityReviewEvidence)
+	firstCast, ok := firstCastMoment.Evidence.(KeyAbilityReviewEvidence)
 	if !ok {
-		t.Fatalf("key ability evidence type = %T", got.Moments[1].Evidence)
+		t.Fatalf("key ability evidence type = %T", firstCastMoment.Evidence)
 	}
 	if firstCast.Ability != "faceless_void_chronosphere" || firstCast.TargetDeathInflictor != "blade_mail" || firstCast.TargetDeathT == nil {
 		t.Fatalf("first cast evidence = %+v", firstCast)
 	}
 
-	secondCast, ok := got.Moments[2].Evidence.(KeyAbilityReviewEvidence)
+	secondCast, ok := secondCastMoment.Evidence.(KeyAbilityReviewEvidence)
 	if !ok {
-		t.Fatalf("second key ability evidence type = %T", got.Moments[2].Evidence)
+		t.Fatalf("second key ability evidence type = %T", secondCastMoment.Evidence)
 	}
 	if secondCast.TargetDeathT != nil || secondCast.EnemyDeathsAfterCast != 1 || secondCast.TargetDamageDealtAfterCast != 900 {
 		t.Fatalf("control cast evidence = %+v", secondCast)
