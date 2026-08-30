@@ -24,6 +24,12 @@ import (
 	"github.com/ap0calypse644/git_gud/internal/watcher"
 )
 
+type missingAPIKeyCoach struct{}
+
+func (missingAPIKeyCoach) Generate(context.Context, coaching.MatchCoachingInput) (string, error) {
+	return "", errors.New("OPENAI_API_KEY is required to generate a coaching report")
+}
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "git-gud:", err)
@@ -57,22 +63,26 @@ func run() error {
 	if cfg.Coaching.Enabled {
 		apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
 		if apiKey == "" {
-			return fmt.Errorf("OPENAI_API_KEY is required when coaching.enabled is true")
+			// Keep the coaching stage configured so a match that actually needs a
+			// report fails clearly, but do not block Phase H pattern backfills for
+			// already-coached matches that never invoke the provider.
+			coach = missingAPIKeyCoach{}
+		} else {
+			model := cfg.Coaching.Model
+			if envModel := strings.TrimSpace(os.Getenv("OPENAI_MODEL")); envModel != "" {
+				model = envModel
+			}
+			reporter := coaching.NewOpenAIReporter(
+				apiKey,
+				model,
+				&http.Client{Timeout: cfg.Coaching.Timeout.Duration()},
+			)
+			if baseURL := strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")); baseURL != "" {
+				reporter.BaseURL = baseURL
+			}
+			reporter.MaxOutputTokens = cfg.Coaching.MaxOutputTokens
+			coach = coaching.NewReportArtifactWriter(cfg.Storage.Path, reporter)
 		}
-		model := cfg.Coaching.Model
-		if envModel := strings.TrimSpace(os.Getenv("OPENAI_MODEL")); envModel != "" {
-			model = envModel
-		}
-		reporter := coaching.NewOpenAIReporter(
-			apiKey,
-			model,
-			&http.Client{Timeout: cfg.Coaching.Timeout.Duration()},
-		)
-		if baseURL := strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")); baseURL != "" {
-			reporter.BaseURL = baseURL
-		}
-		reporter.MaxOutputTokens = cfg.Coaching.MaxOutputTokens
-		coach = coaching.NewReportArtifactWriter(cfg.Storage.Path, reporter)
 	}
 
 	var patternRecorder processor.PatternRecorder
