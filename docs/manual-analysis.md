@@ -38,4 +38,4 @@ Manual processing must not advance or otherwise alter the automatic watcher's di
 
 Both entry paths converge on the same match processor so analysis behavior cannot diverge between historical and newly discovered matches. Pattern recording is idempotent by match ID, so reprocessing a historical match replaces its normalized pattern record rather than double-counting it.
 
-When `coaching.enabled` is true, `OPENAI_API_KEY` must be present in the environment. The key is never stored in `config.json`. `OPENAI_MODEL` and `OPENAI_BASE_URL` may optionally override the configured model and default API base URL.
+`OPENAI_API_KEY` is required only when the invocation actually needs to generate a new coaching report. Pattern-only backfill of an already-coached match does not require the key. The key is never stored in `config.json`. `OPENAI_MODEL` and `OPENAI_BASE_URL` may optionally override the configured model and default API base URL.
