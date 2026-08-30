@@ -11,15 +11,15 @@ const (
 	TypeKeyAbilityUseReviewCandidate             = "key_ability_use_review_candidate"
 	TypeActiveDamageReflectInteractionCandidate = "active_damage_reflect_interaction_candidate"
 
-	KeyAbilityPreCastWindowSeconds       = 3.0
-	KeyAbilityOutcomeWindowSeconds       = 8.0
-	RelevantItemUseLookbackSeconds       = 2.0
+	KeyAbilityPreCastWindowSeconds        = 3.0
+	KeyAbilityOutcomeWindowSeconds        = 8.0
+	RelevantItemUseLookbackSeconds        = 2.0
 	PlayerKnowledgeNotConfirmedFromReplay = "not_confirmed_from_replay"
 )
 
-// KeyAbilityAnalysis exposes one compact review context per supported target
-// key-ability cast plus narrower mechanic-specific interaction candidates when
-// the replay provides direct evidence. These are review targets, not verdicts.
+// KeyAbilityAnalysis exposes compact review contexts for supported target
+// abilities plus narrower mechanic-specific interaction candidates when the
+// replay provides direct evidence. These are review targets, not verdicts.
 type KeyAbilityAnalysis struct {
 	MatchID     int64                  `json:"match_id"`
 	Assessments []KeyAbilityAssessment `json:"assessments"`
@@ -27,43 +27,44 @@ type KeyAbilityAnalysis struct {
 }
 
 type KeyAbilityAssessment struct {
-	CastT               float64                       `json:"cast_t"`
-	Ability             string                        `json:"ability"`
-	Evidence            KeyAbilityUseEvidence         `json:"evidence"`
-	ActiveDamageReflect *ActiveDamageReflectEvidence  `json:"active_damage_reflect,omitempty"`
+	CastT               float64                      `json:"cast_t"`
+	Ability             string                       `json:"ability"`
+	Evidence            KeyAbilityUseEvidence        `json:"evidence"`
+	ActiveDamageReflect *ActiveDamageReflectEvidence `json:"active_damage_reflect,omitempty"`
 }
 
 type KeyAbilityCandidate struct {
-	Type                string                       `json:"type"`
-	T                   float64                      `json:"t"`
-	Confidence          string                       `json:"confidence"`
-	KeyAbility          *KeyAbilityUseEvidence       `json:"key_ability,omitempty"`
-	ActiveDamageReflect *ActiveDamageReflectEvidence `json:"active_damage_reflect,omitempty"`
+	Type                   string                          `json:"type"`
+	T                      float64                         `json:"t"`
+	Confidence             string                          `json:"confidence"`
+	KeyAbility             *KeyAbilityUseEvidence          `json:"key_ability,omitempty"`
+	ActiveDamageReflect    *ActiveDamageReflectEvidence    `json:"active_damage_reflect,omitempty"`
+	TimeWalkDamageRecovery *TimeWalkDamageRecoveryEvidence `json:"time_walk_damage_recovery,omitempty"`
 }
 
 // KeyAbilityUseEvidence deliberately separates decision-time state from a fixed
 // retrospective outcome window. The outcome window is for review prioritization
 // only; it must not be used to invent what the player knew when casting.
 type KeyAbilityUseEvidence struct {
-	Hero                              string   `json:"hero"`
-	Ability                           string   `json:"ability"`
-	CastT                             float64  `json:"cast_t"`
-	TargetSampleAvailable             bool     `json:"target_sample_available"`
-	TargetAliveAtCast                 bool     `json:"target_alive_at_cast"`
-	TargetHPAtCast                    int32    `json:"target_hp_at_cast,omitempty"`
-	TargetMaxHPAtCast                 int32    `json:"target_max_hp_at_cast,omitempty"`
-	TargetHPPctAtCast                 *float64 `json:"target_hp_pct_at_cast,omitempty"`
-	AlliedTeammatesAliveAtCast        int      `json:"allied_teammates_alive_at_cast"`
-	PreCastWindowSeconds              float64  `json:"pre_cast_window_seconds"`
-	TargetDamageDealtBeforeCast       int64    `json:"target_damage_dealt_before_cast"`
-	TargetDamageReceivedBeforeCast    int64    `json:"target_damage_received_before_cast"`
-	OutcomeWindowSeconds              float64  `json:"outcome_window_seconds"`
-	TargetDamageDealtAfterCast        int64    `json:"target_damage_dealt_after_cast"`
-	TargetDamageReceivedAfterCast     int64    `json:"target_damage_received_after_cast"`
-	EnemyDeathsAfterCast              int      `json:"enemy_deaths_after_cast"`
-	AlliedDeathsAfterCast             int      `json:"allied_deaths_after_cast"`
-	TargetDeathT                      *float64 `json:"target_death_t,omitempty"`
-	TargetDeathInflictor              string   `json:"target_death_inflictor,omitempty"`
+	Hero                           string   `json:"hero"`
+	Ability                        string   `json:"ability"`
+	CastT                          float64  `json:"cast_t"`
+	TargetSampleAvailable          bool     `json:"target_sample_available"`
+	TargetAliveAtCast              bool     `json:"target_alive_at_cast"`
+	TargetHPAtCast                 int32    `json:"target_hp_at_cast,omitempty"`
+	TargetMaxHPAtCast              int32    `json:"target_max_hp_at_cast,omitempty"`
+	TargetHPPctAtCast              *float64 `json:"target_hp_pct_at_cast,omitempty"`
+	AlliedTeammatesAliveAtCast     int      `json:"allied_teammates_alive_at_cast"`
+	PreCastWindowSeconds           float64  `json:"pre_cast_window_seconds"`
+	TargetDamageDealtBeforeCast    int64    `json:"target_damage_dealt_before_cast"`
+	TargetDamageReceivedBeforeCast int64    `json:"target_damage_received_before_cast"`
+	OutcomeWindowSeconds           float64  `json:"outcome_window_seconds"`
+	TargetDamageDealtAfterCast     int64    `json:"target_damage_dealt_after_cast"`
+	TargetDamageReceivedAfterCast  int64    `json:"target_damage_received_after_cast"`
+	EnemyDeathsAfterCast           int      `json:"enemy_deaths_after_cast"`
+	AlliedDeathsAfterCast          int      `json:"allied_deaths_after_cast"`
+	TargetDeathT                   *float64 `json:"target_death_t,omitempty"`
+	TargetDeathInflictor           string   `json:"target_death_inflictor,omitempty"`
 }
 
 // ActiveDamageReflectEvidence is a narrow mechanic-level interaction. The item
@@ -71,23 +72,24 @@ type KeyAbilityUseEvidence struct {
 // prevents downstream layers from silently promoting that replay truth into
 // confirmed player knowledge. Reflected damage and death are retrospective.
 type ActiveDamageReflectEvidence struct {
-	Ability                    string   `json:"ability"`
-	CastT                      float64  `json:"cast_t"`
-	Item                       string   `json:"item"`
-	ItemUserSlot               int      `json:"item_user_slot"`
-	ItemUseT                   float64  `json:"item_use_t"`
-	SecondsFromItemUseToCast   float64  `json:"seconds_from_item_use_to_cast"`
-	PlayerKnowledgeStatus      string   `json:"player_knowledge_status"`
-	OutcomeWindowSeconds       float64  `json:"outcome_window_seconds"`
-	ReflectedDamageAfterCast   int64    `json:"reflected_damage_after_cast"`
-	FirstReflectedDamageT      *float64 `json:"first_reflected_damage_t,omitempty"`
-	TargetDeathToReflect       bool     `json:"target_death_to_reflect"`
-	TargetDeathT               *float64 `json:"target_death_t,omitempty"`
+	Ability                  string   `json:"ability"`
+	CastT                    float64  `json:"cast_t"`
+	Item                     string   `json:"item"`
+	ItemUserSlot             int      `json:"item_user_slot"`
+	ItemUseT                 float64  `json:"item_use_t"`
+	SecondsFromItemUseToCast float64  `json:"seconds_from_item_use_to_cast"`
+	PlayerKnowledgeStatus    string   `json:"player_knowledge_status"`
+	OutcomeWindowSeconds     float64  `json:"outcome_window_seconds"`
+	ReflectedDamageAfterCast int64    `json:"reflected_damage_after_cast"`
+	FirstReflectedDamageT    *float64 `json:"first_reflected_damage_t,omitempty"`
+	TargetDeathToReflect     bool     `json:"target_death_to_reflect"`
+	TargetDeathT             *float64 `json:"target_death_t,omitempty"`
 }
 
-// AnalyzeKeyAbilities currently supports Faceless Void's Chronosphere as the
-// first real-replay calibration fixture. The mechanics are implemented through
-// reusable event relationships rather than hero-vs-hero special cases.
+// AnalyzeKeyAbilities currently supports Faceless Void Chronosphere as the
+// generic cast-review fixture, plus damage-recovery Time Walk reviews. The
+// mechanics are implemented through reusable event relationships rather than
+// hero-vs-hero special cases.
 func AnalyzeKeyAbilities(tl *timeline.MatchTimeline) KeyAbilityAnalysis {
 	out := KeyAbilityAnalysis{Assessments: []KeyAbilityAssessment{}, Candidates: []KeyAbilityCandidate{}}
 	if tl == nil {
@@ -130,6 +132,8 @@ func AnalyzeKeyAbilities(tl *timeline.MatchTimeline) KeyAbilityAnalysis {
 		}
 		out.Assessments = append(out.Assessments, assessment)
 	}
+
+	appendTimeWalkDamageRecoveryCandidates(tl, target, &out)
 
 	sort.SliceStable(out.Assessments, func(i, j int) bool {
 		return out.Assessments[i].CastT < out.Assessments[j].CastT
