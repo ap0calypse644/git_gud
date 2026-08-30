@@ -67,8 +67,19 @@ func (d *Downloader) Acquire(ctx context.Context, match opendota.Match) (string,
 		return "", fmt.Errorf("create replay directory: %w", err)
 	}
 	finalDEM := filepath.Join(dir, fmt.Sprintf("%d.dem", match.MatchID))
-	if info, err := os.Stat(finalDEM); err == nil && info.Size() > 0 {
-		return finalDEM, nil
+	if info, err := os.Stat(finalDEM); err == nil {
+		if info.Mode().IsRegular() && info.Size() > 0 {
+			if err := validateReplayFile(finalDEM); err == nil {
+				return finalDEM, nil
+			}
+		}
+		// A stale zero-length, truncated, or otherwise invalid cached .dem must
+		// not be trusted forever. Remove it and reacquire from the replay host.
+		if err := os.Remove(finalDEM); err != nil {
+			return "", fmt.Errorf("remove invalid cached replay: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("stat cached replay: %w", err)
 	}
 
 	// Valve historically served bzip2 under a .dem.bz2 URL, but modern
@@ -212,23 +223,30 @@ func decompressReplay(source, destination string) error {
 	// A successful decompression is not enough: the payload must actually be
 	// a Source 2 Dota demo. This catches HTML/error payloads that happened to
 	// arrive with HTTP 200 and protects Manta from confusing downstream errors.
-	out, err := os.Open(tmpName)
-	if err != nil {
+	if err := validateReplayFile(tmpName); err != nil {
 		return fmt.Errorf("verify decompressed replay: %w", err)
-	}
-	magic := make([]byte, len(rawDEMMagic))
-	_, readErr := io.ReadFull(out, magic)
-	_ = out.Close()
-	if readErr != nil {
-		return fmt.Errorf("verify decompressed replay header: %w", readErr)
-	}
-	if !bytes.Equal(magic, rawDEMMagic) {
-		return fmt.Errorf("decompressed payload is not a Source 2 replay: header % X", magic)
 	}
 
 	if err := os.Rename(tmpName, destination); err != nil {
 		return fmt.Errorf("commit decompressed replay: %w", err)
 	}
 	ok = true
+	return nil
+}
+
+func validateReplayFile(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("open replay: %w", err)
+	}
+	defer f.Close()
+
+	magic := make([]byte, len(rawDEMMagic))
+	if _, err := io.ReadFull(f, magic); err != nil {
+		return fmt.Errorf("read replay header: %w", err)
+	}
+	if !bytes.Equal(magic, rawDEMMagic) {
+		return fmt.Errorf("payload is not a Source 2 replay: header % X", magic)
+	}
 	return nil
 }
