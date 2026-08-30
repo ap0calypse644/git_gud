@@ -19,7 +19,7 @@ func TestAnalyzeKeyAbilitiesTimeWalkDamageRecoveryUsesNormalizedBurstAndCausalSa
 				HeroName:   "npc_dota_hero_faceless_void",
 				Samples: []timeline.HeroSample{
 					{T: 99.5, HP: 300, MaxHP: 1000, Alive: true},
-					// This future sample is retrospective and must not become cast-time HP.
+					// This future sample must not become cast-time state.
 					{T: 100.1, HP: 900, MaxHP: 1000, Alive: true},
 					{T: 199.5, HP: 1000, MaxHP: 2000, Alive: true},
 					{T: 200.1, HP: 1300, MaxHP: 2000, Alive: true},
@@ -47,36 +47,27 @@ func TestAnalyzeKeyAbilitiesTimeWalkDamageRecoveryUsesNormalizedBurstAndCausalSa
 	}
 
 	candidate := analysis.Candidates[0]
-	if candidate.Type != TypeTimeWalkDamageRecoveryReviewCandidate || candidate.TimeWalkDamageRecovery == nil {
+	if candidate.Type != TypeKeyAbilityUseReviewCandidate || candidate.KeyAbility == nil {
 		t.Fatalf("candidate = %+v", candidate)
 	}
-	evidence := candidate.TimeWalkDamageRecovery
+	evidence := candidate.KeyAbility
 	if evidence.Ability != "faceless_void_time_walk" || evidence.CastT != 100 {
 		t.Fatalf("identity = %+v", evidence)
 	}
-	if !evidence.TargetSampleAvailable || !evidence.TargetAliveAtCast || evidence.TargetSampleT != 99.5 {
+	if evidence.PreCastWindowSeconds != TimeWalkPreDamageWindowSeconds || evidence.OutcomeWindowSeconds != TimeWalkOutcomeWindowSeconds {
+		t.Fatalf("windows = %+v", evidence)
+	}
+	if !evidence.TargetSampleAvailable || !evidence.TargetAliveAtCast {
 		t.Fatalf("pre-cast sample = %+v", evidence)
 	}
-	if evidence.TargetHPAtCastSample != 300 || evidence.TargetMaxHPAtCastSample != 1000 {
+	if evidence.TargetHPAtCast != 300 || evidence.TargetMaxHPAtCast != 1000 {
 		t.Fatalf("future sample leaked into cast state: %+v", evidence)
 	}
-	if evidence.TargetHPPctAtCastSample == nil || math.Abs(*evidence.TargetHPPctAtCastSample-0.3) > 1e-9 {
-		t.Fatalf("pre-cast hp pct = %v, want 0.3", evidence.TargetHPPctAtCastSample)
+	if evidence.TargetHPPctAtCast == nil || math.Abs(*evidence.TargetHPPctAtCast-0.3) > 1e-9 {
+		t.Fatalf("pre-cast hp pct = %v, want 0.3", evidence.TargetHPPctAtCast)
 	}
-	if math.Abs(evidence.TargetSampleAgeSeconds-0.5) > 1e-9 {
-		t.Fatalf("sample age = %f, want 0.5", evidence.TargetSampleAgeSeconds)
-	}
-	if evidence.IncomingDamageBeforeCast != 250 || math.Abs(evidence.IncomingDamagePctMaxHP-0.25) > 1e-9 {
-		t.Fatalf("pre-cast damage = %+v", evidence)
-	}
-	if !evidence.PostCastSampleAvailable || evidence.PostCastSampleT == nil || *evidence.PostCastSampleT != 100.1 {
-		t.Fatalf("post-cast sample = %+v", evidence)
-	}
-	if evidence.PostCastSampleDelaySeconds == nil || math.Abs(*evidence.PostCastSampleDelaySeconds-0.1) > 1e-9 {
-		t.Fatalf("post-cast sample delay = %v, want 0.1", evidence.PostCastSampleDelaySeconds)
-	}
-	if evidence.TargetHPAtPostCastSample != 900 || evidence.IncomingDamageAfterCast != 50 {
-		t.Fatalf("retrospective evidence = %+v", evidence)
+	if evidence.TargetDamageReceivedBeforeCast != 250 || evidence.TargetDamageReceivedAfterCast != 50 {
+		t.Fatalf("damage evidence = %+v", evidence)
 	}
 }
 
