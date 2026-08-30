@@ -130,7 +130,7 @@ If replay acquisition exceeds the configured retry window, the match becomes `re
 
 Watcher discovery and known-match processing are independent. If fetching recent matches temporarily fails, the cycle still attempts eligible matches already present in `state.json`; the discovery failure remains visible in logs/command errors.
 
-Cached decompressed replays are validated by the Source 2 replay magic before reuse. A zero-length, truncated, or invalid cached `.dem` is removed and reacquired instead of being trusted indefinitely.
+Cached decompressed replays are validated by the Source 2 replay magic before reuse. A zero-length, header-truncated, or otherwise invalid cached `.dem` is removed and reacquired instead of being trusted indefinitely. Full replay integrity is still established by the normal timeline parser.
 
 State, report, and pattern-history artifacts are written atomically.
 
