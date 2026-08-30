@@ -16,12 +16,19 @@ import (
 	"github.com/ap0calypse644/git_gud/internal/coaching"
 	"github.com/ap0calypse644/git_gud/internal/config"
 	"github.com/ap0calypse644/git_gud/internal/opendota"
+	"github.com/ap0calypse644/git_gud/internal/patterns"
 	"github.com/ap0calypse644/git_gud/internal/processor"
 	"github.com/ap0calypse644/git_gud/internal/replay"
 	"github.com/ap0calypse644/git_gud/internal/storage"
 	"github.com/ap0calypse644/git_gud/internal/timeline"
 	"github.com/ap0calypse644/git_gud/internal/watcher"
 )
+
+type missingAPIKeyCoach struct{}
+
+func (missingAPIKeyCoach) Generate(context.Context, coaching.MatchCoachingInput) (string, error) {
+	return "", errors.New("OPENAI_API_KEY is required to generate a coaching report")
+}
 
 func main() {
 	if err := run(); err != nil {
@@ -56,25 +63,34 @@ func run() error {
 	if cfg.Coaching.Enabled {
 		apiKey := strings.TrimSpace(os.Getenv("OPENAI_API_KEY"))
 		if apiKey == "" {
-			return fmt.Errorf("OPENAI_API_KEY is required when coaching.enabled is true")
+			// Keep the coaching stage configured so a match that actually needs a
+			// report fails clearly, but do not block Phase H pattern backfills for
+			// already-coached matches that never invoke the provider.
+			coach = missingAPIKeyCoach{}
+		} else {
+			model := cfg.Coaching.Model
+			if envModel := strings.TrimSpace(os.Getenv("OPENAI_MODEL")); envModel != "" {
+				model = envModel
+			}
+			reporter := coaching.NewOpenAIReporter(
+				apiKey,
+				model,
+				&http.Client{Timeout: cfg.Coaching.Timeout.Duration()},
+			)
+			if baseURL := strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")); baseURL != "" {
+				reporter.BaseURL = baseURL
+			}
+			reporter.MaxOutputTokens = cfg.Coaching.MaxOutputTokens
+			coach = coaching.NewReportArtifactWriter(cfg.Storage.Path, reporter)
 		}
-		model := cfg.Coaching.Model
-		if envModel := strings.TrimSpace(os.Getenv("OPENAI_MODEL")); envModel != "" {
-			model = envModel
-		}
-		reporter := coaching.NewOpenAIReporter(
-			apiKey,
-			model,
-			&http.Client{Timeout: cfg.Coaching.Timeout.Duration()},
-		)
-		if baseURL := strings.TrimSpace(os.Getenv("OPENAI_BASE_URL")); baseURL != "" {
-			reporter.BaseURL = baseURL
-		}
-		reporter.MaxOutputTokens = cfg.Coaching.MaxOutputTokens
-		coach = coaching.NewReportArtifactWriter(cfg.Storage.Path, reporter)
 	}
 
-	matchProcessor := processor.NewWithCoach(cfg, api, downloader, timelineBuilder, coach, store, logger)
+	var patternRecorder processor.PatternRecorder
+	if cfg.Patterns.Enabled {
+		patternRecorder = patterns.NewStore(cfg.Storage.Path, cfg.Patterns.RecentMatches)
+	}
+
+	matchProcessor := processor.NewWithCoachAndPatterns(cfg, api, downloader, timelineBuilder, coach, patternRecorder, store, logger)
 	watchService := watcher.New(cfg, api, matchProcessor, store, logger)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

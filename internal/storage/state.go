@@ -32,6 +32,7 @@ type MatchState struct {
 	ReplayPath       string      `json:"replay_path,omitempty"`
 	TimelinePath     string      `json:"timeline_path,omitempty"`
 	ReportPath       string      `json:"report_path,omitempty"`
+	PatternRecorded  bool        `json:"pattern_recorded,omitempty"`
 	LastError        string      `json:"last_error,omitempty"`
 }
 

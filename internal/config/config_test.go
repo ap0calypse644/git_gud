@@ -46,4 +46,10 @@ func TestLoadDefaultsAndOverrides(t *testing.T) {
 	if cfg.Coaching.MaxOutputTokens != 3000 {
 		t.Fatalf("coaching max output tokens = %d", cfg.Coaching.MaxOutputTokens)
 	}
+	if !cfg.Patterns.Enabled {
+		t.Fatal("patterns should be enabled by default")
+	}
+	if cfg.Patterns.RecentMatches != 20 {
+		t.Fatalf("patterns recent matches = %d", cfg.Patterns.RecentMatches)
+	}
 }

@@ -114,11 +114,22 @@ func (s *Service) processPending(ctx context.Context) error {
 
 	ids := make([]int64, 0, len(state.Matches))
 	for _, m := range state.Matches {
-		if m.Status == storage.StatusCoachingReady || m.Status == storage.StatusReplayUnavailable {
+		if m.Status == storage.StatusReplayUnavailable {
 			continue
 		}
-		if !s.cfg.Coaching.Enabled && m.Status == storage.StatusTimelineReady {
+		if m.Status == storage.StatusCoachingReady {
+			if !s.cfg.Patterns.Enabled || m.PatternRecorded {
+				continue
+			}
+			ids = append(ids, m.MatchID)
 			continue
+		}
+		if m.Status == storage.StatusTimelineReady {
+			coachingDone := !s.cfg.Coaching.Enabled
+			patternsDone := !s.cfg.Patterns.Enabled || m.PatternRecorded
+			if coachingDone && patternsDone {
+				continue
+			}
 		}
 		ids = append(ids, m.MatchID)
 	}

@@ -37,6 +37,12 @@ type Coach interface {
 	Generate(context.Context, coaching.MatchCoachingInput) (string, error)
 }
 
+// PatternRecorder receives the same detector-normalized compact input. It must
+// not derive recurrence from report prose or raw replay state.
+type PatternRecorder interface {
+	Record(coaching.MatchCoachingInput) (string, error)
+}
+
 type StateStore interface {
 	Load() (storage.State, error)
 	Save(storage.State) error
@@ -62,19 +68,25 @@ type Service struct {
 	acquirer Acquirer
 	timeline TimelineBuilder
 	coach    Coach
+	patterns PatternRecorder
 	store    StateStore
 	log      *slog.Logger
 	now      func() time.Time
 }
 
 // New preserves the deterministic/replay-only construction seam used by tests
-// and diagnostic callers. The main git-gud command uses NewWithCoach so both
-// automatic and manual user-facing processing run the complete pipeline.
+// and diagnostic callers.
 func New(cfg config.Config, api API, acquirer Acquirer, timelineBuilder TimelineBuilder, store StateStore, logger *slog.Logger) *Service {
-	return NewWithCoach(cfg, api, acquirer, timelineBuilder, nil, store, logger)
+	return NewWithCoachAndPatterns(cfg, api, acquirer, timelineBuilder, nil, nil, store, logger)
 }
 
+// NewWithCoach preserves the Phase G construction seam while allowing Phase H
+// callers to opt into pattern recording separately.
 func NewWithCoach(cfg config.Config, api API, acquirer Acquirer, timelineBuilder TimelineBuilder, coach Coach, store StateStore, logger *slog.Logger) *Service {
+	return NewWithCoachAndPatterns(cfg, api, acquirer, timelineBuilder, coach, nil, store, logger)
+}
+
+func NewWithCoachAndPatterns(cfg config.Config, api API, acquirer Acquirer, timelineBuilder TimelineBuilder, coach Coach, patterns PatternRecorder, store StateStore, logger *slog.Logger) *Service {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -84,6 +96,7 @@ func NewWithCoach(cfg config.Config, api API, acquirer Acquirer, timelineBuilder
 		acquirer: acquirer,
 		timeline: timelineBuilder,
 		coach:    coach,
+		patterns: patterns,
 		store:    store,
 		log:      logger,
 		now:      time.Now,
@@ -91,10 +104,10 @@ func NewWithCoach(cfg config.Config, api API, acquirer Acquirer, timelineBuilder
 }
 
 // Process advances one match through metadata, replay acquisition, replay
-// timeline generation, and (when configured) coaching. force bypasses retry
-// throttling and is used by explicit -match invocations. It never modifies
-// State.LastSeenMatchID, so historical processing cannot disturb automatic
-// match discovery.
+// timeline generation, normalized pattern persistence, and (when configured)
+// coaching. force bypasses retry throttling and is used by explicit -match
+// invocations. It never modifies State.LastSeenMatchID, so historical
+// processing cannot disturb automatic match discovery.
 func (s *Service) Process(ctx context.Context, matchID int64, force bool) (Result, error) {
 	state, err := s.store.Load()
 	if err != nil {
@@ -110,7 +123,21 @@ func (s *Service) Process(ctx context.Context, matchID int64, force bool) (Resul
 		}
 	}
 
+	// Phase H can be enabled after a match already reached coaching_ready. Backfill
+	// normalized pattern facts from the durable timeline without re-running AI or
+	// any replay acquisition work.
 	if m.Status == storage.StatusCoachingReady {
+		if s.patterns != nil && !m.PatternRecorded && m.TimelinePath != "" {
+			input, err := s.loadCoachingInput(m)
+			if err != nil {
+				m.LastError = err.Error()
+				_ = s.store.Save(state)
+				return Result{}, err
+			}
+			if err := s.recordPatterns(state, m, input); err != nil {
+				return Result{}, err
+			}
+		}
 		return resultForState(opendota.Match{}, m), nil
 	}
 
@@ -122,17 +149,11 @@ func (s *Service) Process(ctx context.Context, matchID int64, force bool) (Resul
 	m.LastAttemptAt = &now
 	m.LastError = ""
 
-	// A timeline is a durable deterministic artifact. If a previous coaching
-	// attempt failed, resume directly from it instead of re-fetching metadata,
-	// re-downloading the replay, or rebuilding the timeline.
+	// A timeline is a durable deterministic artifact. If a previous coaching or
+	// pattern attempt failed, resume directly from it instead of re-fetching
+	// metadata, re-downloading the replay, or rebuilding the timeline.
 	if m.Status == storage.StatusTimelineReady && m.TimelinePath != "" {
-		if s.coach == nil {
-			if err := s.store.Save(state); err != nil {
-				return Result{}, err
-			}
-			return resultForState(opendota.Match{}, m), nil
-		}
-		return s.generateCoaching(ctx, state, m, opendota.Match{})
+		return s.continueFromTimeline(ctx, state, m, opendota.Match{})
 	}
 
 	match, err := s.api.Match(ctx, matchID)
@@ -205,41 +226,81 @@ func (s *Service) Process(ctx context.Context, matchID int64, force bool) (Resul
 	}
 	m.Status = storage.StatusTimelineReady
 	m.TimelinePath = timelinePath
+	m.PatternRecorded = false
 	m.LastError = ""
 	if err := s.store.Save(state); err != nil {
 		return Result{}, err
 	}
 	s.log.Info("replay timeline ready", "match_id", matchID, "path", timelinePath)
 
-	if s.coach == nil {
-		return resultForState(match, m), nil
-	}
-	return s.generateCoaching(ctx, state, m, match)
+	return s.continueFromTimeline(ctx, state, m, match)
 }
 
-func (s *Service) generateCoaching(ctx context.Context, state storage.State, m *storage.MatchState, match opendota.Match) (Result, error) {
-	f, err := os.Open(m.TimelinePath)
-	if err != nil {
-		m.LastError = err.Error()
-		_ = s.store.Save(state)
-		return Result{}, fmt.Errorf("open replay timeline for coaching: %w", err)
+func (s *Service) continueFromTimeline(ctx context.Context, state storage.State, m *storage.MatchState, match opendota.Match) (Result, error) {
+	if s.patterns == nil && s.coach == nil {
+		if err := s.store.Save(state); err != nil {
+			return Result{}, err
+		}
+		return resultForState(match, m), nil
 	}
-	defer f.Close()
 
-	var tl timeline.MatchTimeline
-	if err := json.NewDecoder(f).Decode(&tl); err != nil {
-		m.LastError = err.Error()
-		_ = s.store.Save(state)
-		return Result{}, fmt.Errorf("decode replay timeline for coaching: %w", err)
-	}
-	input := coaching.BuildMatchCoachingInput(&tl)
-	if input.MatchID != m.MatchID {
-		err := fmt.Errorf("coaching input match_id %d does not match state match_id %d", input.MatchID, m.MatchID)
+	input, err := s.loadCoachingInput(m)
+	if err != nil {
 		m.LastError = err.Error()
 		_ = s.store.Save(state)
 		return Result{}, err
 	}
 
+	if s.patterns != nil && !m.PatternRecorded {
+		if err := s.recordPatterns(state, m, input); err != nil {
+			return Result{}, err
+		}
+	}
+
+	if s.coach == nil {
+		if err := s.store.Save(state); err != nil {
+			return Result{}, err
+		}
+		return resultForState(match, m), nil
+	}
+	return s.generateCoaching(ctx, state, m, match, input)
+}
+
+func (s *Service) loadCoachingInput(m *storage.MatchState) (coaching.MatchCoachingInput, error) {
+	f, err := os.Open(m.TimelinePath)
+	if err != nil {
+		return coaching.MatchCoachingInput{}, fmt.Errorf("open replay timeline for analysis: %w", err)
+	}
+	defer f.Close()
+
+	var tl timeline.MatchTimeline
+	if err := json.NewDecoder(f).Decode(&tl); err != nil {
+		return coaching.MatchCoachingInput{}, fmt.Errorf("decode replay timeline for analysis: %w", err)
+	}
+	input := coaching.BuildMatchCoachingInput(&tl)
+	if input.MatchID != m.MatchID {
+		return coaching.MatchCoachingInput{}, fmt.Errorf("coaching input match_id %d does not match state match_id %d", input.MatchID, m.MatchID)
+	}
+	return input, nil
+}
+
+func (s *Service) recordPatterns(state storage.State, m *storage.MatchState, input coaching.MatchCoachingInput) error {
+	path, err := s.patterns.Record(input)
+	if err != nil {
+		m.LastError = err.Error()
+		_ = s.store.Save(state)
+		return fmt.Errorf("record recurring patterns: %w", err)
+	}
+	m.PatternRecorded = true
+	m.LastError = ""
+	if err := s.store.Save(state); err != nil {
+		return err
+	}
+	s.log.Info("pattern history updated", "match_id", m.MatchID, "path", path)
+	return nil
+}
+
+func (s *Service) generateCoaching(ctx context.Context, state storage.State, m *storage.MatchState, match opendota.Match, input coaching.MatchCoachingInput) (Result, error) {
 	reportPath, err := s.coach.Generate(ctx, input)
 	if err != nil {
 		m.LastError = err.Error()

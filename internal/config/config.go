@@ -59,6 +59,10 @@ type Config struct {
 		Timeout         Duration `json:"timeout"`
 		MaxOutputTokens int      `json:"max_output_tokens"`
 	} `json:"coaching"`
+	Patterns struct {
+		Enabled       bool `json:"enabled"`
+		RecentMatches int  `json:"recent_matches"`
+	} `json:"patterns"`
 }
 
 func defaults() Config {
@@ -75,6 +79,8 @@ func defaults() Config {
 	cfg.Coaching.Model = "gpt-5.6-terra"
 	cfg.Coaching.Timeout = Duration(90 * time.Second)
 	cfg.Coaching.MaxOutputTokens = 3000
+	cfg.Patterns.Enabled = true
+	cfg.Patterns.RecentMatches = 20
 	return cfg
 }
 
@@ -139,6 +145,9 @@ func (c Config) Validate() error {
 		if c.Coaching.MaxOutputTokens <= 0 {
 			errs = append(errs, errors.New("coaching.max_output_tokens must be positive when coaching is enabled"))
 		}
+	}
+	if c.Patterns.Enabled && c.Patterns.RecentMatches <= 0 {
+		errs = append(errs, errors.New("patterns.recent_matches must be positive when patterns are enabled"))
 	}
 	return errors.Join(errs...)
 }
