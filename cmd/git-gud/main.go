@@ -16,6 +16,7 @@ import (
 
 	"github.com/ap0calypse644/git_gud/internal/coaching"
 	"github.com/ap0calypse644/git_gud/internal/config"
+	"github.com/ap0calypse644/git_gud/internal/diagnostics"
 	"github.com/ap0calypse644/git_gud/internal/opendota"
 	"github.com/ap0calypse644/git_gud/internal/opsview"
 	"github.com/ap0calypse644/git_gud/internal/patterns"
@@ -46,6 +47,7 @@ func run() error {
 	showStatus := flag.Bool("status", false, "print watcher and retry status without network calls")
 	historyLimit := flag.Int("history", 0, "print the most recent N tracked matches without network calls")
 	reportMatchID := flag.Int64("report", 0, "print the persisted coaching report for one tracked match ID")
+	doctor := flag.Bool("doctor", false, "validate local state and persisted artifacts without network calls or repairs")
 	flag.Parse()
 
 	if *historyLimit < 0 {
@@ -55,13 +57,13 @@ func run() error {
 		return errors.New("-report must be a positive match ID")
 	}
 	modes := 0
-	for _, selected := range []bool{*once, *matchID > 0, *showStatus, *historyLimit > 0, *reportMatchID > 0} {
+	for _, selected := range []bool{*once, *matchID > 0, *showStatus, *historyLimit > 0, *reportMatchID > 0, *doctor} {
 		if selected {
 			modes++
 		}
 	}
 	if modes > 1 {
-		return errors.New("choose only one of -once, -match, -status, -history, or -report")
+		return errors.New("choose only one of -once, -match, -status, -history, -report, or -doctor")
 	}
 
 	cfg, err := config.Load(*configPath)
@@ -72,7 +74,7 @@ func run() error {
 
 	// Operational inspection modes are deliberately read-only and exit before
 	// OpenDota, replay, watcher, or OpenAI clients are constructed.
-	if *showStatus || *historyLimit > 0 || *reportMatchID > 0 {
+	if *showStatus || *historyLimit > 0 || *reportMatchID > 0 || *doctor {
 		state, err := store.Load()
 		if err != nil {
 			return err
@@ -106,6 +108,15 @@ func run() error {
 				return err
 			}
 			return opsview.WriteReport(os.Stdout, report)
+		case *doctor:
+			report := diagnostics.Run(cfg, state)
+			if err := diagnostics.Write(os.Stdout, report); err != nil {
+				return err
+			}
+			if report.Errors > 0 {
+				return fmt.Errorf("doctor found %d error(s)", report.Errors)
+			}
+			return nil
 		}
 	}
 
