@@ -31,6 +31,12 @@ func TestLoadDefaultsAndOverrides(t *testing.T) {
 	if cfg.HTTP.Timeout.Duration() != 30*time.Second {
 		t.Fatalf("http timeout = %s", cfg.HTTP.Timeout.Duration())
 	}
+	if cfg.Replays.RetryInterval.Duration() != 5*time.Minute {
+		t.Fatalf("retry interval = %s", cfg.Replays.RetryInterval.Duration())
+	}
+	if cfg.Replays.RetryMaxInterval.Duration() != time.Hour {
+		t.Fatalf("retry max interval = %s", cfg.Replays.RetryMaxInterval.Duration())
+	}
 	if cfg.OpenDota.APIKey != "from-env" {
 		t.Fatalf("api key = %q", cfg.OpenDota.APIKey)
 	}
@@ -51,5 +57,15 @@ func TestLoadDefaultsAndOverrides(t *testing.T) {
 	}
 	if cfg.Patterns.RecentMatches != 20 {
 		t.Fatalf("patterns recent matches = %d", cfg.Patterns.RecentMatches)
+	}
+}
+
+func TestValidateRejectsRetryMaxBelowBase(t *testing.T) {
+	cfg := defaults()
+	cfg.Player.AccountID = 1
+	cfg.Replays.RetryInterval = Duration(10 * time.Minute)
+	cfg.Replays.RetryMaxInterval = Duration(5 * time.Minute)
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("expected retry max validation error")
 	}
 }
