@@ -72,7 +72,15 @@ func (s *Service) RunOnce(ctx context.Context) error {
 
 	recent, err := s.api.RecentMatches(ctx, s.cfg.Player.AccountID)
 	if err != nil {
-		return fmt.Errorf("fetch recent matches: %w", err)
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		// Discovery and already-known processing are independent concerns. A
+		// temporary RecentMatches/OpenDota outage must not block local timeline
+		// coaching, pattern backfills, or retries for matches already in state.
+		discoveryErr := fmt.Errorf("fetch recent matches: %w", err)
+		s.log.Warn("match discovery failed; processing known pending matches", "error", err)
+		return errors.Join(discoveryErr, s.processPending(ctx))
 	}
 	sort.Slice(recent, func(i, j int) bool { return recent[i].MatchID < recent[j].MatchID })
 

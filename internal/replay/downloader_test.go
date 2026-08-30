@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -64,6 +65,72 @@ func TestAcquireRejectsUnknownPayload(t *testing.T) {
 	}
 	if _, err := os.Stat(root + "/replays/99.dem.download"); !os.IsNotExist(err) {
 		t.Fatalf("bad download should be removed, stat err = %v", err)
+	}
+}
+
+func TestAcquireReusesValidCachedReplayWithoutHTTP(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Error(w, "should not be called", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	dir := filepath.Join(root, "replays")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cached := filepath.Join(dir, "42.dem")
+	if err := os.WriteFile(cached, []byte("PBDEMS2\x00cached replay\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	d := NewDownloader(server.Client(), root, false)
+	path, err := d.Acquire(context.Background(), opendota.Match{MatchID: 42, ReplayURL: server.URL + "/42.dem.bz2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if path != cached {
+		t.Fatalf("path=%q want=%q", path, cached)
+	}
+	if requests != 0 {
+		t.Fatalf("requests=%d want=0", requests)
+	}
+}
+
+func TestAcquireReplacesInvalidCachedReplay(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_, _ = w.Write([]byte("PBDEMS2\x00replacement replay\n"))
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	dir := filepath.Join(root, "replays")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cached := filepath.Join(dir, "42.dem")
+	if err := os.WriteFile(cached, []byte("corrupt cached replay"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	d := NewDownloader(server.Client(), root, false)
+	path, err := d.Acquire(context.Background(), opendota.Match{MatchID: 42, ReplayURL: server.URL + "/42.dem.bz2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests=%d want=1", requests)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "replacement replay") {
+		t.Fatalf("replacement payload=%q", data)
 	}
 }
 
