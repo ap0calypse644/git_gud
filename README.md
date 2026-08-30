@@ -39,7 +39,9 @@ A historical match can be processed without changing the watcher's discovery bas
 go run ./cmd/git-gud -config config.json -match 8962145737
 ```
 
-The manual and automatic paths use the same processor. With coaching and patterns enabled, both run:
+The manual and automatic paths use the same processor. Explicit `-match` processing bypasses any scheduled automatic retry delay, so it can be used to retry a match immediately without changing the watcher baseline.
+
+With coaching and patterns enabled, both paths run:
 
 ```text
 match metadata
@@ -78,7 +80,7 @@ go run ./cmd/git-gud -config config.json -once
 
 The following commands are read-only. They load local state and artifacts and exit before constructing OpenDota, replay, watcher, or OpenAI clients.
 
-Show watcher state, status counts, pending matches, retry readiness, and the latest persisted error for each pending match:
+Show watcher state, status counts, pending matches, retry readiness, retry count, and the latest persisted error for each pending match:
 
 ```bash
 go run ./cmd/git-gud -config config.json -status
@@ -96,7 +98,13 @@ Print one persisted structured coaching report without reprocessing the match:
 go run ./cmd/git-gud -config config.json -report 8962145737
 ```
 
-Only one execution mode may be selected at a time: `-once`, `-match`, `-status`, `-history`, or `-report`.
+Check local state and artifact consistency without network calls or automatic repairs:
+
+```bash
+go run ./cmd/git-gud -config config.json -doctor
+```
+
+Only one execution mode may be selected at a time: `-once`, `-match`, `-status`, `-history`, `-report`, or `-doctor`.
 
 ## State machine
 
@@ -126,20 +134,23 @@ Pattern recording is tracked independently of the match status. This lets Phase 
 
 If replay acquisition exceeds the configured retry window, the match becomes `replay_unavailable` and is no longer retried automatically.
 
+Automatic retryable waits/failures use persisted bounded exponential backoff. With the defaults, retries are scheduled after 5m, 10m, 20m, 40m, then at most once per hour until progress resets the backoff or the replay retry window expires. This schedule applies to metadata/replay work as well as timeline, pattern, and coaching failures. Explicit `-match` bypasses the delay for that invocation.
+
 `timeline_ready` is deliberately durable. If the coaching provider fails, the watcher retries from the existing timeline rather than re-downloading or re-parsing the replay.
 
 Watcher discovery and known-match processing are independent. If fetching recent matches temporarily fails, the cycle still attempts eligible matches already present in `state.json`; the discovery failure remains visible in logs/command errors.
 
 Cached decompressed replays are validated by the Source 2 replay magic before reuse. A zero-length, header-truncated, or otherwise invalid cached `.dem` is removed and reacquired instead of being trusted indefinitely. Full replay integrity is still established by the normal timeline parser.
 
-State, report, and pattern-history artifacts are written atomically.
+State, report, pattern-history, and retry schedule state are written atomically.
 
 ## Configuration
 
 See [`config.example.json`](config.example.json). Important defaults:
 
 - polling: `60s`
-- replay retry interval: `5m`
+- automatic retry base interval: `5m`
+- automatic retry maximum interval: `1h`
 - replay retry window: `168h`
 - replay download timeout: `10m`
 - bootstrap historical matches: disabled
