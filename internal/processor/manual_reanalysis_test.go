@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/ap0calypse644/git_gud/internal/opendota"
 	"github.com/ap0calypse644/git_gud/internal/storage"
 )
 
