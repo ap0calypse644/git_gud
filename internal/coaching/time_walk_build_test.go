@@ -70,9 +70,21 @@ func TestBuildMatchCoachingInputAddsCompactTimeWalkDamageRecoveryReview(t *testi
 		t.Fatal(err)
 	}
 	text := string(encoded)
-	for _, forbidden := range []string{"111.25", "222.5", "333.75", "444.5", "777.125", "888.25", `"players"`, `"samples"`} {
+	for _, required := range []string{
+		`"target_hp_latest_sample_before_cast":300`,
+		`"target_max_hp_latest_sample_before_cast":1000`,
+		`"target_hp_pct_latest_sample_before_cast":0.3`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("compact Time Walk input missing sampled-state label %q: %s", required, text)
+		}
+	}
+	for _, forbidden := range []string{
+		"111.25", "222.5", "333.75", "444.5", "777.125", "888.25",
+		`"players"`, `"samples"`, `"target_hp_at_cast"`, `"target_max_hp_at_cast"`, `"target_hp_pct_at_cast"`,
+	} {
 		if strings.Contains(text, forbidden) {
-			t.Fatalf("compact Time Walk input leaked %q: %s", forbidden, text)
+			t.Fatalf("compact Time Walk input leaked or mislabeled %q: %s", forbidden, text)
 		}
 	}
 }
