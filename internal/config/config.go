@@ -47,11 +47,12 @@ type Config struct {
 		BootstrapExisting bool `json:"bootstrap_existing"`
 	} `json:"watcher"`
 	Replays struct {
-		RequestParse    bool     `json:"request_parse"`
-		RetryInterval   Duration `json:"retry_interval"`
-		RetryFor        Duration `json:"retry_for"`
-		KeepCompressed  bool     `json:"keep_compressed"`
-		DownloadTimeout Duration `json:"download_timeout"`
+		RequestParse     bool     `json:"request_parse"`
+		RetryInterval    Duration `json:"retry_interval"`
+		RetryMaxInterval Duration `json:"retry_max_interval"`
+		RetryFor         Duration `json:"retry_for"`
+		KeepCompressed   bool     `json:"keep_compressed"`
+		DownloadTimeout  Duration `json:"download_timeout"`
 	} `json:"replays"`
 	Coaching struct {
 		Enabled         bool     `json:"enabled"`
@@ -73,6 +74,7 @@ func defaults() Config {
 	cfg.Poll.Interval = Duration(60 * time.Second)
 	cfg.Replays.RequestParse = true
 	cfg.Replays.RetryInterval = Duration(5 * time.Minute)
+	cfg.Replays.RetryMaxInterval = Duration(time.Hour)
 	cfg.Replays.RetryFor = Duration(168 * time.Hour)
 	cfg.Replays.DownloadTimeout = Duration(10 * time.Minute)
 	cfg.Coaching.Enabled = true
@@ -128,6 +130,11 @@ func (c Config) Validate() error {
 	}
 	if c.Replays.RetryInterval.Duration() <= 0 {
 		errs = append(errs, errors.New("replays.retry_interval must be positive"))
+	}
+	if c.Replays.RetryMaxInterval.Duration() <= 0 {
+		errs = append(errs, errors.New("replays.retry_max_interval must be positive"))
+	} else if c.Replays.RetryMaxInterval.Duration() < c.Replays.RetryInterval.Duration() {
+		errs = append(errs, errors.New("replays.retry_max_interval must be greater than or equal to replays.retry_interval"))
 	}
 	if c.Replays.RetryFor.Duration() <= 0 {
 		errs = append(errs, errors.New("replays.retry_for must be positive"))

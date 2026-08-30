@@ -29,6 +29,8 @@ type MatchState struct {
 	Status           MatchStatus `json:"status"`
 	ParseRequestedAt *time.Time  `json:"parse_requested_at,omitempty"`
 	LastAttemptAt    *time.Time  `json:"last_attempt_at,omitempty"`
+	RetryCount       int         `json:"retry_count,omitempty"`
+	NextRetryAt      *time.Time  `json:"next_retry_at,omitempty"`
 	ReplayPath       string      `json:"replay_path,omitempty"`
 	TimelinePath     string      `json:"timeline_path,omitempty"`
 	ReportPath       string      `json:"report_path,omitempty"`
