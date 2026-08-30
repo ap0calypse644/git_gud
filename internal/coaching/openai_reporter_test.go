@@ -87,6 +87,7 @@ func TestOpenAIReporterGenerateUsesOnlyCompactInputAndStructuredSchema(t *testin
 		for _, required := range []string{
 			"source_moment_id",
 			"Do not copy facts from a neighboring moment",
+			"reserve one report slot for one contrasting cast",
 			"retrospective_outcomes",
 			"never use retrospective outcomes to claim the player should have predicted",
 			"Do not quote support_radius_timeline or nearest_ally_distance",
