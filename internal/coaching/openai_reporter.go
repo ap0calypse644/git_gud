@@ -34,6 +34,40 @@ type OpenAIReporter struct {
 	Client          *http.Client
 }
 
+type reportModelInput struct {
+	MatchID int64                    `json:"match_id"`
+	Hero    string                   `json:"hero"`
+	Moments []reportModelInputMoment `json:"moments"`
+}
+
+type reportModelInputMoment struct {
+	SourceMomentID string  `json:"source_moment_id"`
+	Type           string  `json:"type"`
+	StartT         float64 `json:"start_t"`
+	EndT           float64 `json:"end_t"`
+	Confidence     string  `json:"confidence"`
+	Evidence       any     `json:"evidence"`
+}
+
+func buildReportModelInput(input MatchCoachingInput) reportModelInput {
+	out := reportModelInput{
+		MatchID: input.MatchID,
+		Hero:    input.Hero,
+		Moments: make([]reportModelInputMoment, 0, len(input.Moments)),
+	}
+	for index, moment := range input.Moments {
+		out.Moments = append(out.Moments, reportModelInputMoment{
+			SourceMomentID: sourceMomentID(index, moment),
+			Type:           moment.Type,
+			StartT:         moment.StartT,
+			EndT:           moment.EndT,
+			Confidence:     moment.Confidence,
+			Evidence:       moment.Evidence,
+		})
+	}
+	return out
+}
+
 func NewOpenAIReporter(apiKey, model string, client *http.Client) *OpenAIReporter {
 	if strings.TrimSpace(model) == "" {
 		model = defaultOpenAIModel
@@ -64,7 +98,7 @@ func (r *OpenAIReporter) Generate(ctx context.Context, input MatchCoachingInput)
 		return MatchCoachingReport{}, fmt.Errorf("openai model is required")
 	}
 
-	inputJSON, err := json.Marshal(input)
+	inputJSON, err := json.Marshal(buildReportModelInput(input))
 	if err != nil {
 		return MatchCoachingReport{}, fmt.Errorf("encode coaching input: %w", err)
 	}
@@ -79,7 +113,7 @@ func (r *OpenAIReporter) Generate(ctx context.Context, input MatchCoachingInput)
 		"max_output_tokens": maxOutputTokens,
 		"input": []map[string]string{
 			{"role": "system", "content": coachingReportSystemPrompt},
-			{"role": "user", "content": "MatchCoachingInput. Source moment indexes are zero-based indexes into moments.\n" + string(inputJSON)},
+			{"role": "user", "content": "MatchCoachingInput-derived evidence. Every moment has an explicit source_moment_id. Never refer to moments by array position; copy the exact source_moment_id of every moment whose evidence you use.\n" + string(inputJSON)},
 		},
 		"text": map[string]any{
 			"format": map[string]any{
@@ -189,7 +223,9 @@ func extractOpenAIOutputText(response openAIResponsesAPIResponse) (string, error
 
 const coachingReportSystemPrompt = `You are a Dota 2 replay coaching reviewer.
 
-You receive ONLY detector-normalized MatchCoachingInput. Treat it as the complete evidence available to you. Never invent or infer exact enemy locations, hidden vision, wards, player intent, map coordinates, buyback state, cooldowns, resources, or any other replay fact that is not explicitly present in the input.
+You receive ONLY detector-normalized MatchCoachingInput-derived evidence. Treat it as the complete evidence available to you. Never invent or infer exact enemy locations, hidden vision, wards, player intent, map coordinates, buyback state, cooldowns, resources, or any other replay fact that is not explicitly present in the input.
+
+Each input moment has a unique source_moment_id. Treat that ID as part of the evidence record. Never refer to a moment by its array position. For every fact or conclusion you use, copy the exact source_moment_id of the moment that supplied that evidence into source_moment_ids. Do not copy facts from a neighboring moment under another moment's ID.
 
 Each input moment is a review target, not proof of a mistake. Preserve that uncertainty. The output assessment may be "review", "likely_mistake", or "probably_reasonable"; never describe a candidate as definitively wrong merely because a detector emitted it.
 
@@ -213,8 +249,8 @@ Isolation evidence contains an internal timeline-coordinate distance. Do not quo
 Missing-enemy evidence is conservative last-seen knowledge, not a known enemy position. You may state that an enemy had not been seen for the supplied duration/status, but never infer where that enemy was.
 
 For every selected report moment:
-- source_moment_indexes must reference the zero-based input moments that support it;
-- decision_time_facts and retrospective_outcomes must be direct, cautious restatements of explicit source evidence;
+- source_moment_ids must contain the exact IDs of the input moments that support it;
+- decision_time_facts and retrospective_outcomes must be direct, cautious restatements of explicit evidence from those exact source IDs;
 - interpretation must clearly be coaching inference rather than a new replay fact;
 - alternative must describe a plausible action available around that decision time without relying on later events;
 - why_it_matters should explain the practical gameplay consequence.
