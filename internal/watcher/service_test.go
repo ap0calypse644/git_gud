@@ -2,9 +2,11 @@ package watcher
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,10 +18,11 @@ import (
 
 type fakeAPI struct {
 	recent []opendota.RecentMatch
+	err    error
 }
 
 func (f *fakeAPI) RecentMatches(context.Context, uint32) ([]opendota.RecentMatch, error) {
-	return f.recent, nil
+	return f.recent, f.err
 }
 
 type fakeProcessor struct {
@@ -91,6 +94,29 @@ func TestNewMatchDelegatesToProcessor(t *testing.T) {
 	}
 	if got := state.Match(43); got == nil || got.Status != storage.StatusDiscovered {
 		t.Fatalf("discovered match state = %#v", got)
+	}
+}
+
+func TestDiscoveryFailureStillProcessesKnownPendingMatches(t *testing.T) {
+	cfg := testConfig()
+	cfg.Coaching.Enabled = true
+	store := storage.New(filepath.Join(t.TempDir(), "state.json"))
+	state := storage.NewState()
+	state.Initialized = true
+	state.LastSeenMatchID = 49
+	state.Put(&storage.MatchState{MatchID: 50, Status: storage.StatusTimelineReady})
+	if err := store.Save(state); err != nil {
+		t.Fatal(err)
+	}
+
+	matchProcessor := &fakeProcessor{}
+	svc := New(cfg, &fakeAPI{err: errors.New("temporary discovery outage")}, matchProcessor, store, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	err := svc.RunOnce(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "fetch recent matches") {
+		t.Fatalf("RunOnce error = %v", err)
+	}
+	if len(matchProcessor.calls) != 1 || matchProcessor.calls[0] != 50 {
+		t.Fatalf("processor calls = %#v", matchProcessor.calls)
 	}
 }
 
