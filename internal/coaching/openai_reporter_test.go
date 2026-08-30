@@ -30,6 +30,7 @@ func TestOpenAIReporterGenerateUsesOnlyCompactInputAndStructuredSchema(t *testin
 			},
 		}},
 	}
+	sourceID := sourceMomentID(0, input.Moments[0])
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/responses" {
@@ -65,7 +66,7 @@ func TestOpenAIReporterGenerateUsesOnlyCompactInputAndStructuredSchema(t *testin
 		if err != nil {
 			t.Fatalf("marshal schema: %v", err)
 		}
-		for _, field := range []string{"decision_time_facts", "retrospective_outcomes"} {
+		for _, field := range []string{"source_moment_ids", "decision_time_facts", "retrospective_outcomes"} {
 			if !strings.Contains(string(encodedSchema), field) {
 				t.Errorf("structured schema missing %q: %s", field, encodedSchema)
 			}
@@ -84,6 +85,9 @@ func TestOpenAIReporterGenerateUsesOnlyCompactInputAndStructuredSchema(t *testin
 			t.Fatalf("system content=%#v", systemMessage["content"])
 		}
 		for _, required := range []string{
+			"source_moment_id",
+			"Do not copy facts from a neighboring moment",
+			"reserve one report slot for one contrasting cast",
 			"retrospective_outcomes",
 			"never use retrospective outcomes to claim the player should have predicted",
 			"Do not quote support_radius_timeline or nearest_ally_distance",
@@ -102,10 +106,13 @@ func TestOpenAIReporterGenerateUsesOnlyCompactInputAndStructuredSchema(t *testin
 		if !ok {
 			t.Fatalf("user content=%#v", userMessage["content"])
 		}
-		for _, required := range []string{"\"match_id\":123", "post_wave_overstay_candidate", "3:150:bottom"} {
+		for _, required := range []string{"\"match_id\":123", "post_wave_overstay_candidate", "3:150:bottom", sourceID, "source_moment_id"} {
 			if !strings.Contains(userContent, required) {
 				t.Errorf("user payload missing %q: %s", required, userContent)
 			}
+		}
+		if strings.Contains(userContent, "zero-based indexes") {
+			t.Errorf("user payload still relies on positional indexes: %s", userContent)
 		}
 		for _, forbidden := range []string{"target_wave_danger", "target_post_wave_overstay", "\"players\"", "777.125", "888.25"} {
 			if strings.Contains(userContent, forbidden) {
@@ -117,7 +124,7 @@ func TestOpenAIReporterGenerateUsesOnlyCompactInputAndStructuredSchema(t *testin
 			Summary:    "One lane decision deserves review.",
 			Priorities: []string{"Disengage after the wave when the next step is unclear."},
 			Moments: []modelCoachingReportMoment{{
-				SourceMomentIndexes:   []int{0},
+				SourceMomentIDs:       []string{sourceID},
 				Assessment:            "likely_mistake",
 				Title:                 "Stayed after the wave was cleared",
 				DecisionTimeFacts:     []string{"The post-clear exposure continued after the wave clear."},
@@ -157,6 +164,9 @@ func TestOpenAIReporterGenerateUsesOnlyCompactInputAndStructuredSchema(t *testin
 	}
 	if report.Moments[0].StartT != 196 || report.Moments[0].EndT != 202 {
 		t.Fatalf("derived time=%v..%v", report.Moments[0].StartT, report.Moments[0].EndT)
+	}
+	if len(report.Moments[0].SourceMomentIndexes) != 1 || report.Moments[0].SourceMomentIndexes[0] != 0 {
+		t.Fatalf("source indexes=%v", report.Moments[0].SourceMomentIndexes)
 	}
 	if len(report.Moments[0].SourceConfidences) != 1 || report.Moments[0].SourceConfidences[0] != "low" {
 		t.Fatalf("source confidence=%v", report.Moments[0].SourceConfidences)

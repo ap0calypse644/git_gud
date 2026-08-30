@@ -86,6 +86,21 @@ func BuildMatchCoachingInput(tl *timeline.MatchTimeline) MatchCoachingInput {
 		})
 	}
 
+	keyAbilityAnalysis := detector.AnalyzeKeyAbilities(tl)
+	for _, candidate := range keyAbilityAnalysis.Candidates {
+		evidence, t, ok := keyAbilityCandidateEvidence(candidate)
+		if !ok {
+			continue
+		}
+		out.Moments = append(out.Moments, CoachingMoment{
+			Type:       candidate.Type,
+			StartT:     t,
+			EndT:       t,
+			Confidence: candidate.Confidence,
+			Evidence:   evidence,
+		})
+	}
+
 	sort.SliceStable(out.Moments, func(i, j int) bool {
 		if out.Moments[i].StartT == out.Moments[j].StartT {
 			return out.Moments[i].Type < out.Moments[j].Type
@@ -155,17 +170,17 @@ func postWaveCandidateEvidence(candidate detector.PostWaveCandidate) (PostWaveOv
 	}
 
 	evidence := PostWaveOverstayReviewEvidence{
-		WaveID:                              source.WaveID,
-		Lane:                                source.Lane,
-		LastDepletionT:                      source.LastDepletionT,
-		ExposureEndT:                        source.ExposureEndT,
-		PostClearDurationSeconds:            source.PostClearDurationSeconds,
-		PostClearLaneProgressDeltaWorld:     *source.PostClearLaneProgressDeltaWorld,
-		TargetCombatStartedDuringPostClear:  source.TargetCombatStartedDuringPostClear,
-		SecondsFromClearToFirstInvolvement:  *source.SecondsFromClearToFirstInvolvement,
-		TargetFirstInvolvementSource:        source.TargetFirstInvolvementSource,
-		NextWaveTakingObserved:              source.NextWaveTakingObserved,
-		NextTargetDeathT:                    copyFloat64(source.NextTargetDeathT),
+		WaveID:                             source.WaveID,
+		Lane:                               source.Lane,
+		LastDepletionT:                     source.LastDepletionT,
+		ExposureEndT:                       source.ExposureEndT,
+		PostClearDurationSeconds:           source.PostClearDurationSeconds,
+		PostClearLaneProgressDeltaWorld:    *source.PostClearLaneProgressDeltaWorld,
+		TargetCombatStartedDuringPostClear: source.TargetCombatStartedDuringPostClear,
+		SecondsFromClearToFirstInvolvement: *source.SecondsFromClearToFirstInvolvement,
+		TargetFirstInvolvementSource:       source.TargetFirstInvolvementSource,
+		NextWaveTakingObserved:             source.NextWaveTakingObserved,
+		NextTargetDeathT:                   copyFloat64(source.NextTargetDeathT),
 	}
 	return evidence, source.LastDepletionT, source.ExposureEndT, true
 }
@@ -188,26 +203,106 @@ func objectiveCandidateEvidence(candidate detector.ObjectiveCandidate) (PostFigh
 	}
 
 	evidence := PostFightConversionReviewEvidence{
-		FightIndex:                    source.FightIndex,
-		FightObservedStartT:           source.FightObservedStartT,
-		FightObservedEndT:             source.FightObservedEndT,
-		WindowStartT:                  source.WindowStartT,
-		WindowEndT:                    source.WindowEndT,
-		WindowEndReason:               source.WindowEndReason,
-		WindowDurationSeconds:         source.WindowDurationSeconds,
-		TargetAliveAtFightEnd:         source.TargetAliveAtEnd,
-		AlliedHeroesAliveAtFightEnd:   source.AlliedHeroesAliveAtEnd,
-		AlliedDeaths:                  source.AlliedDeaths,
-		EnemyDeaths:                   source.EnemyDeaths,
-		EnemyDeathAdvantage:           source.EnemyDeathAdvantage,
-		EnemyDeathsStillDeadAtEnd:     source.EnemyDeathsStillDeadAtWindowEnd,
-		PushableTowerOptions:          pushable,
-		RoshanKnowledgeState:          source.RoshanKnowledgeState,
-		RoshanKnownAliveForDecision:   source.RoshanKnownAliveForDecision,
-		TargetTeamConversionCount:     source.TargetTeamConversionCount,
-		NoTargetTeamConversion:        source.NoTargetTeamConversion,
+		FightIndex:                  source.FightIndex,
+		FightObservedStartT:         source.FightObservedStartT,
+		FightObservedEndT:           source.FightObservedEndT,
+		WindowStartT:                source.WindowStartT,
+		WindowEndT:                  source.WindowEndT,
+		WindowEndReason:             source.WindowEndReason,
+		WindowDurationSeconds:       source.WindowDurationSeconds,
+		TargetAliveAtFightEnd:       source.TargetAliveAtEnd,
+		AlliedHeroesAliveAtFightEnd: source.AlliedHeroesAliveAtEnd,
+		AlliedDeaths:                source.AlliedDeaths,
+		EnemyDeaths:                 source.EnemyDeaths,
+		EnemyDeathAdvantage:         source.EnemyDeathAdvantage,
+		EnemyDeathsStillDeadAtEnd:   source.EnemyDeathsStillDeadAtWindowEnd,
+		PushableTowerOptions:        pushable,
+		RoshanKnowledgeState:        source.RoshanKnowledgeState,
+		RoshanKnownAliveForDecision: source.RoshanKnownAliveForDecision,
+		TargetTeamConversionCount:   source.TargetTeamConversionCount,
+		NoTargetTeamConversion:      source.NoTargetTeamConversion,
 	}
 	return evidence, source.FightObservedStartT, source.WindowEndT, true
+}
+
+func keyAbilityCandidateEvidence(candidate detector.KeyAbilityCandidate) (any, float64, bool) {
+	switch candidate.Type {
+	case detector.TypeKeyAbilityUseReviewCandidate:
+		if candidate.KeyAbility == nil {
+			return nil, 0, false
+		}
+		source := candidate.KeyAbility
+		if source.Ability == "" || !finite(source.CastT) || source.PreCastWindowSeconds <= 0 ||
+			!finite(source.PreCastWindowSeconds) || source.OutcomeWindowSeconds <= 0 || !finite(source.OutcomeWindowSeconds) ||
+			source.AlliedTeammatesAliveAtCast < 0 || source.EnemyDeathsAfterCast < 0 || source.AlliedDeathsAfterCast < 0 {
+			return nil, 0, false
+		}
+		if source.TargetHPPctAtCast != nil && (!finite(*source.TargetHPPctAtCast) || *source.TargetHPPctAtCast < 0) {
+			return nil, 0, false
+		}
+		if source.TargetDeathT != nil && (!finite(*source.TargetDeathT) || *source.TargetDeathT <= source.CastT || *source.TargetDeathT > source.CastT+source.OutcomeWindowSeconds) {
+			return nil, 0, false
+		}
+		evidence := KeyAbilityReviewEvidence{
+			Ability:                        source.Ability,
+			CastT:                          source.CastT,
+			TargetSampleAvailable:          source.TargetSampleAvailable,
+			TargetAliveAtCast:              source.TargetAliveAtCast,
+			TargetHPAtCast:                 source.TargetHPAtCast,
+			TargetMaxHPAtCast:              source.TargetMaxHPAtCast,
+			TargetHPPctAtCast:              copyFloat64(source.TargetHPPctAtCast),
+			AlliedTeammatesAliveAtCast:     source.AlliedTeammatesAliveAtCast,
+			PreCastWindowSeconds:           source.PreCastWindowSeconds,
+			TargetDamageDealtBeforeCast:    source.TargetDamageDealtBeforeCast,
+			TargetDamageReceivedBeforeCast: source.TargetDamageReceivedBeforeCast,
+			OutcomeWindowSeconds:           source.OutcomeWindowSeconds,
+			TargetDamageDealtAfterCast:     source.TargetDamageDealtAfterCast,
+			TargetDamageReceivedAfterCast:  source.TargetDamageReceivedAfterCast,
+			EnemyDeathsAfterCast:           source.EnemyDeathsAfterCast,
+			AlliedDeathsAfterCast:          source.AlliedDeathsAfterCast,
+			TargetDeathT:                   copyFloat64(source.TargetDeathT),
+			TargetDeathInflictor:           source.TargetDeathInflictor,
+		}
+		return evidence, source.CastT, true
+
+	case detector.TypeActiveDamageReflectInteractionCandidate:
+		if candidate.ActiveDamageReflect == nil {
+			return nil, 0, false
+		}
+		source := candidate.ActiveDamageReflect
+		if source.Ability == "" || source.Item == "" || !finite(source.CastT) || !finite(source.ItemUseT) ||
+			source.ItemUseT > source.CastT || !finite(source.SecondsFromItemUseToCast) || source.SecondsFromItemUseToCast < 0 ||
+			source.PlayerKnowledgeStatus != detector.PlayerKnowledgeNotConfirmedFromReplay ||
+			!finite(source.OutcomeWindowSeconds) || source.OutcomeWindowSeconds <= 0 || source.ReflectedDamageAfterCast <= 0 {
+			return nil, 0, false
+		}
+		if source.FirstReflectedDamageT == nil || !finite(*source.FirstReflectedDamageT) || *source.FirstReflectedDamageT <= source.CastT || *source.FirstReflectedDamageT > source.CastT+source.OutcomeWindowSeconds {
+			return nil, 0, false
+		}
+		if source.TargetDeathToReflect {
+			if source.TargetDeathT == nil || !finite(*source.TargetDeathT) || *source.TargetDeathT <= source.CastT || *source.TargetDeathT > source.CastT+source.OutcomeWindowSeconds {
+				return nil, 0, false
+			}
+		} else if source.TargetDeathT != nil {
+			return nil, 0, false
+		}
+		evidence := ActiveDamageReflectReviewEvidence{
+			Ability:                  source.Ability,
+			CastT:                    source.CastT,
+			Item:                     source.Item,
+			ItemUseT:                 source.ItemUseT,
+			SecondsFromItemUseToCast: source.SecondsFromItemUseToCast,
+			PlayerKnowledgeStatus:    source.PlayerKnowledgeStatus,
+			OutcomeWindowSeconds:     source.OutcomeWindowSeconds,
+			ReflectedDamageAfterCast: source.ReflectedDamageAfterCast,
+			FirstReflectedDamageT:    copyFloat64(source.FirstReflectedDamageT),
+			TargetDeathToReflect:     source.TargetDeathToReflect,
+			TargetDeathT:             copyFloat64(source.TargetDeathT),
+		}
+		return evidence, source.CastT, true
+	default:
+		return nil, 0, false
+	}
 }
 
 func finite(value float64) bool {

@@ -15,7 +15,7 @@ func TestBuildMatchCoachingReportDerivesSourceMetadata(t *testing.T) {
 		Summary:    "One important decision overlapped two review signals.",
 		Priorities: []string{"Disengage earlier from unsupported small engagements."},
 		Moments: []modelCoachingReportMoment{{
-			SourceMomentIndexes:   []int{1, 0},
+			SourceMomentIDs:       []string{sourceMomentID(1, input.Moments[1]), sourceMomentID(0, input.Moments[0])},
 			Assessment:            "likely_mistake",
 			Title:                 "Unsupported death",
 			DecisionTimeFacts:     []string{"No ally was within the configured support radius."},
@@ -58,10 +58,11 @@ func TestBuildMatchCoachingReportRejectsReusedSourceMoment(t *testing.T) {
 	input := MatchCoachingInput{
 		Moments: []CoachingMoment{{Type: "x", StartT: 1, EndT: 1, Confidence: "low"}},
 	}
+	id := sourceMomentID(0, input.Moments[0])
 	modelOutput := modelReportOutput{
 		Moments: []modelCoachingReportMoment{
-			{SourceMomentIndexes: []int{0}},
-			{SourceMomentIndexes: []int{0}},
+			{SourceMomentIDs: []string{id}},
+			{SourceMomentIDs: []string{id}},
 		},
 	}
 	if _, err := buildMatchCoachingReport(input, modelOutput); err == nil {
@@ -69,10 +70,33 @@ func TestBuildMatchCoachingReportRejectsReusedSourceMoment(t *testing.T) {
 	}
 }
 
-func TestNormalizeSourceIndexesRejectsInvalidIndexes(t *testing.T) {
-	for _, indexes := range [][]int{{}, {-1}, {2}, {1, 1}} {
-		if _, err := normalizeSourceIndexes(indexes, 2); err == nil {
-			t.Fatalf("indexes %v unexpectedly accepted", indexes)
+func TestNormalizeSourceIDsRejectsInvalidIDs(t *testing.T) {
+	input := MatchCoachingInput{
+		Moments: []CoachingMoment{
+			{Type: "x", StartT: 1, EndT: 1, Confidence: "low"},
+			{Type: "y", StartT: 2, EndT: 2, Confidence: "low"},
+		},
+	}
+	valid := sourceMomentID(0, input.Moments[0])
+	for _, ids := range [][]string{{}, {"m999_unknown_1.000"}, {valid, valid}} {
+		if _, err := normalizeSourceIDs(ids, input); err == nil {
+			t.Fatalf("ids %v unexpectedly accepted", ids)
 		}
+	}
+}
+
+func TestSourceMomentIDDifferentiatesAdjacentMoments(t *testing.T) {
+	first := CoachingMoment{Type: "bad_fight_join_candidate", StartT: 3777.566848754883}
+	second := CoachingMoment{Type: "key_ability_use_review_candidate", StartT: 3914.900344848633}
+	firstID := sourceMomentID(24, first)
+	secondID := sourceMomentID(25, second)
+	if firstID == secondID {
+		t.Fatalf("adjacent source ids collided: %q", firstID)
+	}
+	if firstID != "m024_bad_fight_join_candidate_3777.567" {
+		t.Fatalf("first id=%q", firstID)
+	}
+	if secondID != "m025_key_ability_use_review_candidate_3914.900" {
+		t.Fatalf("second id=%q", secondID)
 	}
 }

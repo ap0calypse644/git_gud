@@ -133,21 +133,37 @@ func (s *Service) Process(ctx context.Context, matchID int64, force bool) (Resul
 	m.LastError = ""
 
 	// Phase H can be enabled after a match already reached coaching_ready. Backfill
-	// normalized pattern facts from the durable timeline without re-running AI or
-	// any replay acquisition work. This path obeys the same automatic retry
-	// backoff as every other stage.
+	// normalized pattern facts from the durable timeline without repeating replay
+	// acquisition. Automatic processing keeps coaching_ready terminal, while an
+	// explicit forced -match request regenerates coaching from the same durable
+	// timeline so historical reports can benefit from newer analysis logic.
 	if m.Status == storage.StatusCoachingReady {
+		var input coaching.MatchCoachingInput
+		inputLoaded := false
 		if s.patterns != nil && !m.PatternRecorded && m.TimelinePath != "" {
-			input, err := s.loadCoachingInput(m)
+			input, err = s.loadCoachingInput(m)
 			if err != nil {
 				m.LastError = err.Error()
 				s.scheduleRetry(m, now)
 				_ = s.store.Save(state)
 				return Result{}, err
 			}
+			inputLoaded = true
 			if err := s.recordPatterns(state, m, input, now); err != nil {
 				return Result{}, err
 			}
+		}
+		if force && s.coach != nil && m.TimelinePath != "" {
+			if !inputLoaded {
+				input, err = s.loadCoachingInput(m)
+				if err != nil {
+					m.LastError = err.Error()
+					s.scheduleRetry(m, now)
+					_ = s.store.Save(state)
+					return Result{}, err
+				}
+			}
+			return s.generateCoaching(ctx, state, m, opendota.Match{}, input, now)
 		}
 		return resultForState(opendota.Match{}, m), nil
 	}
