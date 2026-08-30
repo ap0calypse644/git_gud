@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"github.com/ap0calypse644/git_gud/internal/coaching"
+	"github.com/ap0calypse644/git_gud/internal/detector"
 )
 
 const historyVersion = 1
@@ -193,6 +194,9 @@ func matchRecordFromInput(input coaching.MatchCoachingInput) MatchRecord {
 		Observations: make([]Observation, 0, len(input.Moments)),
 	}
 	for _, moment := range input.Moments {
+		if !patternEligibleType(moment.Type) {
+			continue
+		}
 		record.Observations = append(record.Observations, Observation{
 			Type:       moment.Type,
 			Confidence: moment.Confidence,
@@ -203,6 +207,23 @@ func matchRecordFromInput(input coaching.MatchCoachingInput) MatchRecord {
 		})
 	}
 	return record
+}
+
+// New coaching candidate families must opt in here only after their recurrence
+// semantics are calibrated. In particular, a generic key-ability review moment
+// does not mean that simply using the ability is a recurring mistake.
+func patternEligibleType(typ string) bool {
+	switch typ {
+	case detector.TypeIsolatedDeathCandidate,
+		detector.TypePreFightDeathCandidate,
+		detector.TypeBadFightJoinCandidate,
+		detector.TypeMissedFightCandidate,
+		detector.TypePostWaveOverstayCandidate,
+		detector.TypePostFightConversionReviewCandidate:
+		return true
+	default:
+		return false
+	}
 }
 
 func upsertMatch(matches *[]MatchRecord, record MatchRecord) {
@@ -233,11 +254,11 @@ func recomputeSummary(history *History) {
 	history.RecentMatchesConsidered = len(recent)
 
 	type accumulator struct {
-		matches    int
+		matches     int
 		occurrences int
-		heroes     map[string]int
-		phases     map[string]int
-		lanes      map[string]int
+		heroes      map[string]int
+		phases      map[string]int
+		lanes       map[string]int
 	}
 	acc := make(map[string]*accumulator)
 	for _, match := range recent {
