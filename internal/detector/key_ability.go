@@ -34,12 +34,11 @@ type KeyAbilityAssessment struct {
 }
 
 type KeyAbilityCandidate struct {
-	Type                   string                          `json:"type"`
-	T                      float64                         `json:"t"`
-	Confidence             string                          `json:"confidence"`
-	KeyAbility             *KeyAbilityUseEvidence          `json:"key_ability,omitempty"`
-	ActiveDamageReflect    *ActiveDamageReflectEvidence    `json:"active_damage_reflect,omitempty"`
-	TimeWalkDamageRecovery *TimeWalkDamageRecoveryEvidence `json:"time_walk_damage_recovery,omitempty"`
+	Type                string                       `json:"type"`
+	T                   float64                      `json:"t"`
+	Confidence          string                       `json:"confidence"`
+	KeyAbility          *KeyAbilityUseEvidence       `json:"key_ability,omitempty"`
+	ActiveDamageReflect *ActiveDamageReflectEvidence `json:"active_damage_reflect,omitempty"`
 }
 
 // KeyAbilityUseEvidence deliberately separates decision-time state from a fixed
