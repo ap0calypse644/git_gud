@@ -128,6 +128,10 @@ If replay acquisition exceeds the configured retry window, the match becomes `re
 
 `timeline_ready` is deliberately durable. If the coaching provider fails, the watcher retries from the existing timeline rather than re-downloading or re-parsing the replay.
 
+Watcher discovery and known-match processing are independent. If fetching recent matches temporarily fails, the cycle still attempts eligible matches already present in `state.json`; the discovery failure remains visible in logs/command errors.
+
+Cached decompressed replays are validated by the Source 2 replay magic before reuse. A zero-length, truncated, or invalid cached `.dem` is removed and reacquired instead of being trusted indefinitely.
+
 State, report, and pattern-history artifacts are written atomically.
 
 ## Configuration
