@@ -105,8 +105,8 @@ func NewWithCoachAndPatterns(cfg config.Config, api API, acquirer Acquirer, time
 
 // Process advances one match through metadata, replay acquisition, replay
 // timeline generation, normalized pattern persistence, and (when configured)
-// coaching. force bypasses retry throttling and is used by explicit -match
-// invocations. It never modifies State.LastSeenMatchID, so historical
+// coaching. force bypasses automatic retry throttling and is used by explicit
+// -match invocations. It never modifies State.LastSeenMatchID, so historical
 // processing cannot disturb automatic match discovery.
 func (s *Service) Process(ctx context.Context, matchID int64, force bool) (Result, error) {
 	state, err := s.store.Load()
@@ -123,52 +123,60 @@ func (s *Service) Process(ctx context.Context, matchID int64, force bool) (Resul
 		}
 	}
 
+	now := s.now().UTC()
+	if !force && !s.retryReady(m, now) {
+		return resultForState(opendota.Match{}, m), nil
+	}
+
+	previousStatus := m.Status
+	m.LastAttemptAt = &now
+	m.LastError = ""
+
 	// Phase H can be enabled after a match already reached coaching_ready. Backfill
 	// normalized pattern facts from the durable timeline without re-running AI or
-	// any replay acquisition work.
+	// any replay acquisition work. This path obeys the same automatic retry
+	// backoff as every other stage.
 	if m.Status == storage.StatusCoachingReady {
 		if s.patterns != nil && !m.PatternRecorded && m.TimelinePath != "" {
 			input, err := s.loadCoachingInput(m)
 			if err != nil {
 				m.LastError = err.Error()
+				s.scheduleRetry(m, now)
 				_ = s.store.Save(state)
 				return Result{}, err
 			}
-			if err := s.recordPatterns(state, m, input); err != nil {
+			if err := s.recordPatterns(state, m, input, now); err != nil {
 				return Result{}, err
 			}
 		}
 		return resultForState(opendota.Match{}, m), nil
 	}
 
-	now := s.now().UTC()
-	if !force && m.LastAttemptAt != nil && now.Sub(*m.LastAttemptAt) < s.cfg.Replays.RetryInterval.Duration() {
-		return resultForState(opendota.Match{}, m), nil
-	}
-
-	m.LastAttemptAt = &now
-	m.LastError = ""
-
 	// A timeline is a durable deterministic artifact. If a previous coaching or
 	// pattern attempt failed, resume directly from it instead of re-fetching
 	// metadata, re-downloading the replay, or rebuilding the timeline.
 	if m.Status == storage.StatusTimelineReady && m.TimelinePath != "" {
-		return s.continueFromTimeline(ctx, state, m, opendota.Match{})
+		return s.continueFromTimeline(ctx, state, m, opendota.Match{}, now)
 	}
 
 	match, err := s.api.Match(ctx, matchID)
 	if err != nil {
 		m.LastError = err.Error()
+		s.scheduleRetry(m, now)
 		_ = s.store.Save(state)
 		return Result{}, fmt.Errorf("fetch metadata: %w", err)
 	}
 	m.StartTime = match.StartTime
 	m.Status = storage.StatusMetadataReady
+	if previousStatus == storage.StatusDiscovered {
+		s.clearRetry(m)
+	}
 
 	if replay.ResolveURL(match) == "" {
 		if s.retryExpired(match.StartTime, now) {
 			m.Status = storage.StatusReplayUnavailable
 			m.LastError = "replay retry window expired before replay metadata became available"
+			s.clearRetry(m)
 			if err := s.store.Save(state); err != nil {
 				return Result{}, err
 			}
@@ -180,25 +188,38 @@ func (s *Service) Process(ctx context.Context, matchID int64, force bool) (Resul
 		if s.cfg.Replays.RequestParse && m.ParseRequestedAt == nil {
 			if err := s.api.RequestParse(ctx, matchID); err != nil {
 				m.LastError = err.Error()
+				s.scheduleRetry(m, now)
 				_ = s.store.Save(state)
 				return Result{}, fmt.Errorf("request OpenDota parse: %w", err)
 			}
 			requestedAt := now
 			m.ParseRequestedAt = &requestedAt
+			// A successful parse request is concrete progress. Start the waiting
+			// backoff again from the configured base interval.
+			s.clearRetry(m)
 			s.log.Info("requested OpenDota parse", "match_id", matchID)
 		}
+		s.scheduleRetry(m, now)
 		if err := s.store.Save(state); err != nil {
 			return Result{}, err
 		}
 		return resultForState(match, m), nil
 	}
 
+	// Replay metadata becoming available after replay_waiting is also progress;
+	// reset the waiting backoff before attempting the actual replay download.
+	if previousStatus == storage.StatusReplayWaiting {
+		s.clearRetry(m)
+	}
 	path, err := s.acquirer.Acquire(ctx, match)
 	if err != nil {
 		m.Status = storage.StatusReplayWaiting
 		m.LastError = err.Error()
 		if s.retryExpired(match.StartTime, now) && (replay.IsStatus(err, http.StatusNotFound) || replay.IsStatus(err, http.StatusForbidden)) {
 			m.Status = storage.StatusReplayUnavailable
+			s.clearRetry(m)
+		} else {
+			s.scheduleRetry(m, now)
 		}
 		_ = s.store.Save(state)
 		return Result{}, fmt.Errorf("acquire replay: %w", err)
@@ -207,6 +228,7 @@ func (s *Service) Process(ctx context.Context, matchID int64, force bool) (Resul
 	m.Status = storage.StatusReplayDownloaded
 	m.ReplayPath = path
 	m.LastError = ""
+	s.clearRetry(m)
 	if err := s.store.Save(state); err != nil {
 		return Result{}, err
 	}
@@ -221,6 +243,7 @@ func (s *Service) Process(ctx context.Context, matchID int64, force bool) (Resul
 	timelinePath, err := s.timeline.Build(ctx, match, path)
 	if err != nil {
 		m.LastError = err.Error()
+		s.scheduleRetry(m, now)
 		_ = s.store.Save(state)
 		return Result{}, fmt.Errorf("build replay timeline: %w", err)
 	}
@@ -228,16 +251,18 @@ func (s *Service) Process(ctx context.Context, matchID int64, force bool) (Resul
 	m.TimelinePath = timelinePath
 	m.PatternRecorded = false
 	m.LastError = ""
+	s.clearRetry(m)
 	if err := s.store.Save(state); err != nil {
 		return Result{}, err
 	}
 	s.log.Info("replay timeline ready", "match_id", matchID, "path", timelinePath)
 
-	return s.continueFromTimeline(ctx, state, m, match)
+	return s.continueFromTimeline(ctx, state, m, match, now)
 }
 
-func (s *Service) continueFromTimeline(ctx context.Context, state storage.State, m *storage.MatchState, match opendota.Match) (Result, error) {
+func (s *Service) continueFromTimeline(ctx context.Context, state storage.State, m *storage.MatchState, match opendota.Match, now time.Time) (Result, error) {
 	if s.patterns == nil && s.coach == nil {
+		s.clearRetry(m)
 		if err := s.store.Save(state); err != nil {
 			return Result{}, err
 		}
@@ -247,23 +272,25 @@ func (s *Service) continueFromTimeline(ctx context.Context, state storage.State,
 	input, err := s.loadCoachingInput(m)
 	if err != nil {
 		m.LastError = err.Error()
+		s.scheduleRetry(m, now)
 		_ = s.store.Save(state)
 		return Result{}, err
 	}
 
 	if s.patterns != nil && !m.PatternRecorded {
-		if err := s.recordPatterns(state, m, input); err != nil {
+		if err := s.recordPatterns(state, m, input, now); err != nil {
 			return Result{}, err
 		}
 	}
 
 	if s.coach == nil {
+		s.clearRetry(m)
 		if err := s.store.Save(state); err != nil {
 			return Result{}, err
 		}
 		return resultForState(match, m), nil
 	}
-	return s.generateCoaching(ctx, state, m, match, input)
+	return s.generateCoaching(ctx, state, m, match, input, now)
 }
 
 func (s *Service) loadCoachingInput(m *storage.MatchState) (coaching.MatchCoachingInput, error) {
@@ -284,15 +311,17 @@ func (s *Service) loadCoachingInput(m *storage.MatchState) (coaching.MatchCoachi
 	return input, nil
 }
 
-func (s *Service) recordPatterns(state storage.State, m *storage.MatchState, input coaching.MatchCoachingInput) error {
+func (s *Service) recordPatterns(state storage.State, m *storage.MatchState, input coaching.MatchCoachingInput, now time.Time) error {
 	path, err := s.patterns.Record(input)
 	if err != nil {
 		m.LastError = err.Error()
+		s.scheduleRetry(m, now)
 		_ = s.store.Save(state)
 		return fmt.Errorf("record recurring patterns: %w", err)
 	}
 	m.PatternRecorded = true
 	m.LastError = ""
+	s.clearRetry(m)
 	if err := s.store.Save(state); err != nil {
 		return err
 	}
@@ -300,16 +329,18 @@ func (s *Service) recordPatterns(state storage.State, m *storage.MatchState, inp
 	return nil
 }
 
-func (s *Service) generateCoaching(ctx context.Context, state storage.State, m *storage.MatchState, match opendota.Match, input coaching.MatchCoachingInput) (Result, error) {
+func (s *Service) generateCoaching(ctx context.Context, state storage.State, m *storage.MatchState, match opendota.Match, input coaching.MatchCoachingInput, now time.Time) (Result, error) {
 	reportPath, err := s.coach.Generate(ctx, input)
 	if err != nil {
 		m.LastError = err.Error()
+		s.scheduleRetry(m, now)
 		_ = s.store.Save(state)
 		return Result{}, fmt.Errorf("generate coaching report: %w", err)
 	}
 	m.Status = storage.StatusCoachingReady
 	m.ReportPath = reportPath
 	m.LastError = ""
+	s.clearRetry(m)
 	if err := s.store.Save(state); err != nil {
 		return Result{}, err
 	}
@@ -325,6 +356,63 @@ func resultForState(match opendota.Match, state *storage.MatchState) Result {
 		TimelinePath: state.TimelinePath,
 		ReportPath:   state.ReportPath,
 	}
+}
+
+func (s *Service) retryReady(m *storage.MatchState, now time.Time) bool {
+	if m == nil {
+		return true
+	}
+	if m.NextRetryAt != nil {
+		return !now.Before(*m.NextRetryAt)
+	}
+	// Legacy states created before persisted backoff only have LastAttemptAt.
+	// Honor one base interval so upgrading cannot suddenly hammer a pending job.
+	if m.LastAttemptAt != nil && now.Sub(*m.LastAttemptAt) < s.cfg.Replays.RetryInterval.Duration() {
+		return false
+	}
+	return true
+}
+
+func (s *Service) scheduleRetry(m *storage.MatchState, now time.Time) {
+	if m == nil {
+		return
+	}
+	m.RetryCount++
+	delay := retryDelay(
+		s.cfg.Replays.RetryInterval.Duration(),
+		s.cfg.Replays.RetryMaxInterval.Duration(),
+		m.RetryCount,
+	)
+	next := now.Add(delay)
+	m.NextRetryAt = &next
+}
+
+func (s *Service) clearRetry(m *storage.MatchState) {
+	if m == nil {
+		return
+	}
+	m.RetryCount = 0
+	m.NextRetryAt = nil
+}
+
+func retryDelay(base, max time.Duration, count int) time.Duration {
+	if base <= 0 {
+		return 0
+	}
+	if max < base {
+		max = base
+	}
+	delay := base
+	for i := 1; i < count && delay < max; i++ {
+		if delay > max/2 {
+			return max
+		}
+		delay *= 2
+	}
+	if delay > max {
+		return max
+	}
+	return delay
 }
 
 func (s *Service) retryExpired(startTime int64, now time.Time) bool {
