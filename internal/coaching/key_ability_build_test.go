@@ -84,20 +84,26 @@ func TestBuildMatchCoachingInputAddsCompactChronosphereReviews(t *testing.T) {
 		t.Fatalf("reflect evidence = %+v", reflect)
 	}
 
-	firstCast, ok := firstCastMoment.Evidence.(KeyAbilityReviewEvidence)
+	firstCast, ok := firstCastMoment.Evidence.(ChronosphereKeyAbilityReviewEvidence)
 	if !ok {
 		t.Fatalf("key ability evidence type = %T", firstCastMoment.Evidence)
 	}
 	if firstCast.Ability != "faceless_void_chronosphere" || firstCast.TargetDeathInflictor != "blade_mail" || firstCast.TargetDeathT == nil {
 		t.Fatalf("first cast evidence = %+v", firstCast)
 	}
+	if firstCast.ChronosphereFollowup.TargetEnemyHeroesDamagedInFollowup != 1 || firstCast.ChronosphereFollowup.TargetHeroDamageInFollowup != 500 {
+		t.Fatalf("first cast follow-up = %+v", firstCast.ChronosphereFollowup)
+	}
 
-	secondCast, ok := secondCastMoment.Evidence.(KeyAbilityReviewEvidence)
+	secondCast, ok := secondCastMoment.Evidence.(ChronosphereKeyAbilityReviewEvidence)
 	if !ok {
 		t.Fatalf("second key ability evidence type = %T", secondCastMoment.Evidence)
 	}
 	if secondCast.TargetDeathT != nil || secondCast.EnemyDeathsAfterCast != 1 || secondCast.TargetDamageDealtAfterCast != 900 {
 		t.Fatalf("control cast evidence = %+v", secondCast)
+	}
+	if secondCast.ChronosphereFollowup.TargetEnemyHeroesDamagedInFollowup != 1 || secondCast.ChronosphereFollowup.TargetHeroDamageInFollowup != 900 {
+		t.Fatalf("control cast follow-up = %+v", secondCast.ChronosphereFollowup)
 	}
 
 	encoded, err := json.Marshal(got)
@@ -131,7 +137,7 @@ func TestKeyAbilityCandidateEvidenceFailsClosed(t *testing.T) {
 			TargetDeathT:         float64Ptr(99),
 		},
 	}
-	if _, _, ok := keyAbilityCandidateEvidence(badGeneric); ok {
+	if _, _, ok := keyAbilityCandidateEvidence(nil, badGeneric); ok {
 		t.Fatal("accepted retrospective death before cast")
 	}
 
@@ -149,7 +155,7 @@ func TestKeyAbilityCandidateEvidenceFailsClosed(t *testing.T) {
 			FirstReflectedDamageT:    float64Ptr(102),
 		},
 	}
-	if _, _, ok := keyAbilityCandidateEvidence(badReflect); ok {
+	if _, _, ok := keyAbilityCandidateEvidence(nil, badReflect); ok {
 		t.Fatal("accepted unsupported player-knowledge promotion")
 	}
 }
