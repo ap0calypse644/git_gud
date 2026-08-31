@@ -12,6 +12,9 @@ func TestCoachingReportSystemPromptSeparatesChronospherePreCastAndFollowupEviden
 		"post-cast retrospective evidence only",
 		"Never copy, substitute, or paraphrase a follow-up count as a pre-cast count",
 		"does not identify which heroes were caught by Chronosphere or establish cast placement quality",
+		"damage-relationship aggregates only",
+		"do not establish hero proximity or visibility",
+		"never as nearby, visible, or positional context",
 	} {
 		if !strings.Contains(coachingReportSystemPrompt, required) {
 			t.Fatalf("system prompt missing Chronosphere temporal calibration %q", required)
